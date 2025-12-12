@@ -4,7 +4,7 @@
 
 ### Главная страница
 
-![general-page](design\Desktop.png)
+![general-page](design/Desktop.png)
 
 ### Дальше будет разбиение на другие страницы
 
@@ -14,11 +14,11 @@
 
 1. React (<https://react.dev/>)
 
-    ![react](design\react.png)
+    ![react](design/react.png)
 
 1. FullCalendar.js (<https://fullcalendar.io/>)
 
-    ![calendar](design\calendar.png)
+    ![calendar](design/calendar.png)
 
 ### Серверная часть
 
