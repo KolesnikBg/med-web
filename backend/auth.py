@@ -26,10 +26,7 @@ class Auth:
                 'email': user['email'],
                 'name': user['name'],
                 'birth_date': user['birth_date'],
-                'blood_type': user['blood_type'],
-                'allergies': user['allergies'],
-                'chronic_diseases': user['chronic_diseases'],
-                'emergency_contact': user['emergency_contact']
+                'sex_type': user['sex_type']
             }
         }
     
@@ -52,9 +49,6 @@ class Auth:
                 'email': user['email'],
                 'name': user['name'],
                 'birth_date': user['birth_date'],
-                'blood_type': user['blood_type'],
-                'allergies': user['allergies'],
-                'chronic_diseases': user['chronic_diseases'],
-                'emergency_contact': user['emergency_contact']
+                'sex_type': user['sex_type']
             }
         }

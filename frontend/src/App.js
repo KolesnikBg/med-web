@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { BrowserRouter as Router, Routes, Route, Navigate } from 'react-router-dom';
 import Login from './pages/Login';
+import Register from './pages/Register';
 import Dashboard from './pages/Dashboard';
 import Analysis from './pages/Analysis';
 import Appointments from './pages/Appointments';
@@ -33,6 +34,13 @@ function App() {
     setIsAuthenticated(true);
   };
 
+  const handleRegister = (userData, token) => {
+    localStorage.setItem('med_user', JSON.stringify(userData));
+    localStorage.setItem('med_token', token);
+    setUser(userData);
+    setIsAuthenticated(true);
+  };
+
   const handleLogout = () => {
     localStorage.removeItem('med_user');
     localStorage.removeItem('med_token');
@@ -55,6 +63,15 @@ function App() {
               element={
                 !isAuthenticated ? 
                 <Login onLogin={handleLogin} /> : 
+                <Navigate to="/" />
+              } 
+            />
+            
+            <Route 
+              path="/register" 
+              element={
+                !isAuthenticated ? 
+                <Register onRegister={handleRegister} /> : 
                 <Navigate to="/" />
               } 
             />

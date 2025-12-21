@@ -1,19 +1,24 @@
 import React, { useState } from 'react';
+import { Link } from 'react-router-dom';
 import api from '../services/api';
-
+// пропс на вход 
 const Login = ({ onLogin }) => {
+  
+  // состояния 
   const [email, setEmail] = useState('demo@example.com');
   const [password, setPassword] = useState('demo123');
   const [error, setError] = useState('');
-  const [loading, setLoading] = useState(false);
+  const [loading, setLoading] = useState(false);  // блок повторки отправки формы
 
+  // функ отправки формы 
   const handleSubmit = async (e) => {
-    e.preventDefault();
-    setError('');
+    e.preventDefault();  // какая-то нужна фигня 
+    setError(''); 
     setLoading(true);
 
     try {
-      // Используем наш упрощенный API
+      // упрощенный API
+      // через json отправляет почту и пароль (НУЖНО ДОБАВИТЬ ЕЩЕ ДАННЫЕ НА ОТПРАВКУ!)
       const response = await fetch('http://localhost:5000/api/auth/login', {
         method: 'POST',
         headers: {
@@ -22,18 +27,20 @@ const Login = ({ onLogin }) => {
         body: JSON.stringify({ email, password }),
       });
 
+      // проверочка отправки 
       const data = await response.json();
 
+      // если ответ не 2хх - это сломались 
       if (!response.ok) {
         throw new Error(data.message || 'Ошибка входа');
       }
 
       if (data.success) {
-        // Сохраняем пользователя
+        // cсохранение пользователя
         localStorage.setItem('med_user', JSON.stringify(data.user));
-        localStorage.setItem('med_token', 'demo-token'); // Временный токен
+        localStorage.setItem('med_token', 'demo-token'); // временный токен
         
-        // Вызываем callback
+        // вызов callback
         onLogin(data.user, 'demo-token');
       } else {
         setError(data.message || 'Ошибка входа');
@@ -71,13 +78,11 @@ const Login = ({ onLogin }) => {
               id="password"
               value={password}
               onChange={(e) => setPassword(e.target.value)}
-              placeholder="••••••••"
+              placeholder=""
               className="form-input"
               required
             />
           </div>
-          
-          {error && <div className="error-message">{error}</div>}
           
           <button 
             type="submit" 
@@ -88,10 +93,9 @@ const Login = ({ onLogin }) => {
           </button>
         </form>
         
-        <div className="demo-credentials">
-          <p><strong>Демо доступ:</strong></p>
-          <p>Email: demo@example.com</p>
-          <p>Пароль: demo123</p>
+        <div className="login-links">
+          <span>Нет аккаунта?</span>
+          <Link to="/register" className="register-link">Зарегистрироваться</Link>
         </div>
       </div>
     </div>

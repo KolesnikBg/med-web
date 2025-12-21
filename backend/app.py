@@ -389,15 +389,71 @@ def get_stats():
         'upcoming_appointments': upcoming_appointments
     })
 
+@app.route('/api/auth/register', methods=['POST'])
+def register():
+    """Регистрация нового пользователя"""
+    data = request.get_json()
+    
+    # Проверяем обязательные поля
+    required_fields = ['email', 'password', 'name']
+    for field in required_fields:
+        if field not in data:
+            return jsonify({
+                'success': False,
+                'message': f'Отсутствует обязательное поле: {field}'
+            }), 400
+    
+    email = data['email']
+    password = data['password']
+    name = data['name']
+    
+    conn = get_db()
+    cursor = conn.cursor()
+    
+    try:
+        # Проверяем, не существует ли уже пользователь с таким email
+        cursor.execute("SELECT id FROM users WHERE email = ?", (email,))
+        if cursor.fetchone():
+            return jsonify({
+                'success': False,
+                'message': 'Пользователь с таким email уже существует'
+            }), 400
+        
+        # Создаем нового пользователя
+        cursor.execute(
+            "INSERT INTO users (email, password, name) VALUES (?, ?, ?)",
+            (email, password, name)
+        )
+        
+        user_id = cursor.lastrowid
+        
+        # Получаем созданного пользователя
+        cursor.execute("SELECT * FROM users WHERE id = ?", (user_id,))
+        user = dict(cursor.fetchone())
+        
+        conn.commit()
+        
+        return jsonify({
+            'success': True,
+            'user': user,
+            'message': 'Регистрация успешна'
+        }), 201
+        
+    except Exception as e:
+        conn.rollback()
+        return jsonify({
+            'success': False,
+            'message': f'Ошибка регистрации: {str(e)}'
+        }), 500
+        
+    finally:
+        conn.close()
+
 if __name__ == '__main__':
-    print("=" * 50)
-    print("🚀 Медицинская книжка - Flask сервер")
-    print("=" * 50)
-    print(f"📂 База данных: {DB_PATH}")
-    print("🔗 Адрес: http://localhost:5000")
-    print("📝 Демо пользователь:")
-    print("   Email: demo@example.com")
-    print("   Пароль: demo123")
-    print("=" * 50)
+    print(f"База данных: {DB_PATH}")
+    print("Адрес: http://localhost:5000")
+    print("Демо пользователь:")
+    print("Email: demo@example.com")
+    print("Пароль: demo123")
     
     app.run(debug=True, host='0.0.0.0', port=5000)

@@ -324,7 +324,7 @@
   display: grid;
   grid-template-columns: 1fr 1fr;
   gap: 20px;
-  margin-bottom: 20px;
+  /* margin-bottom: 20px; */
 }
 
 .form-group {
@@ -574,3 +574,58 @@
   --status-canceled: #dc3545;
   --status-default: #6c757d;
 }
+
+/* Register Page Styles */
+.login-subtitle {
+  text-align: center;
+  color: #666;
+  margin-bottom: 32px;
+  font-size: 1.1rem;
+  line-height: 1.5;
+}
+
+/* Обёртка всей формы — добавим чуть больше отступов сверху/снизу */
+.login-card {
+  padding: 2.5rem 1.5rem;
+  max-width: 520px;
+  margin: 0 auto;
+}
+
+/* Секция формы (например: "Личные данные", "Контакты") */
+.form-section {
+  /* margin-bottom: 32px;
+  padding-bottom: 24px;
+  border-bottom: 1px solid #eee; */
+  position: relative;
+}
+
+.form-section:last-child {
+  border-bottom: none;
+  margin-bottom: 0;
+  padding-bottom: 0;
+}
+
+.form-section-title {
+  font-size: 1.125rem;
+  font-weight: 600;
+  color: #333;
+  margin-bottom: 18px;
+  padding-bottom: 6px;
+  border-bottom: 2px solid #667eea;
+  display: inline-block;
+}
+
+/* Адаптивная сетка: на мобильных — один столбец */
+.form-row {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 18px;
+}
+
+@media (max-width: 480px) {
+  .form-row {
+    grid-template-columns: 1fr;
+    gap: 0px;
+  }
+}
+
