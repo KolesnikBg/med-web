@@ -1,0 +1,69 @@
+// src/App.jsx
+import React, { useState, useEffect } from 'react';
+import { BrowserRouter as Router, Routes, Route, Navigate } from 'react-router-dom';
+import Login from './pages/Login';
+import Register from './pages/Register';
+import Dashboard from './pages/Dashboard';
+import AddAppointment from './pages/AddAppointment';
+import Appointments from './pages/Appointments';
+import Analysis from './pages/Analysis';
+import Profile from './pages/Profile';
+import Header from './components/Header';
+import './styles/global.css';
+import './styles/pages.css';
+
+function App() {
+  const [isAuthenticated, setIsAuthenticated] = useState(false);
+  const [user, setUser] = useState(null);
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    const token = localStorage.getItem('med_token');
+    const savedUser = localStorage.getItem('med_user');
+    
+    if (token && savedUser) {
+      setUser(JSON.parse(savedUser));
+      setIsAuthenticated(true);
+    }
+    setLoading(false);
+  }, []);
+
+  const handleLogin = (userData, token) => {
+    localStorage.setItem('med_user', JSON.stringify(userData));
+    localStorage.setItem('med_token', token);
+    setUser(userData);
+    setIsAuthenticated(true);
+  };
+
+  const handleLogout = () => {
+    localStorage.removeItem('med_user');
+    localStorage.removeItem('med_token');
+    setUser(null);
+    setIsAuthenticated(false);
+  };
+
+  if (loading) {
+    return <div className="loading">Загрузка...</div>;
+  }
+
+  return (
+    <Router>
+      <div className="app">
+        {isAuthenticated && <Header user={user} onLogout={handleLogout} />}
+        <div className="main-content">
+          <Routes>
+            <Route path="/login" element={!isAuthenticated ? <Login onLogin={handleLogin} /> : <Navigate to="/" />} />
+            <Route path="/register" element={!isAuthenticated ? <Register onRegister={handleLogin} /> : <Navigate to="/" />} />
+            <Route path="/" element={isAuthenticated ? <Dashboard user={user} /> : <Navigate to="/login" />} />
+            <Route path="/add-appointment" element={isAuthenticated ? <AddAppointment /> : <Navigate to="/login" />} />
+            <Route path="/appointments" element={isAuthenticated ? <Appointments /> : <Navigate to="/login" />} />
+            <Route path="/analysis" element={isAuthenticated ? <Analysis /> : <Navigate to="/login" />} />
+            <Route path="/profile" element={isAuthenticated ? <Profile user={user} /> : <Navigate to="/login" />} />
+          </Routes>
+        </div>
+      </div>
+    </Router>
+  );
+}
+
+export default App;

@@ -1,28 +1,33 @@
+# backend/app.py
 import os
+import sqlite3
+import bcrypt
+from flask_jwt_extended import JWTManager
 from flask import Flask, request, jsonify
 from flask_cors import CORS
-from datetime import datetime
-import sqlite3
+from flask_jwt_extended import JWTManager, jwt_required, get_jwt_identity, create_access_token
+from datetime import datetime, timedelta
 
+# === Конфигурация ===
 app = Flask(__name__)
+app.config['SECRET_KEY'] = os.getenv('SECRET_KEY', 'super-secret-med-key')
+app.config['JWT_ACCESS_TOKEN_EXPIRES'] = timedelta(hours=24)
 CORS(app, origins=['http://localhost:3000'])
+jwt = JWTManager(app)
 
-# Создаем папку data если ее нет
+# Пути
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 DATA_DIR = os.path.join(BASE_DIR, 'data')
 DB_PATH = os.path.join(DATA_DIR, 'medical.db')
+os.makedirs(DATA_DIR, exist_ok=True)
 
-if not os.path.exists(DATA_DIR):
-    os.makedirs(DATA_DIR)
-
+# === Вспомогательные функции ===
 def get_db():
-    """Получение соединения с БД"""
     conn = sqlite3.connect(DB_PATH)
     conn.row_factory = sqlite3.Row
     return conn
 
 def init_db():
-    """Инициализация базы данных"""
     conn = get_db()
     cursor = conn.cursor()
     
@@ -30,70 +35,111 @@ def init_db():
     cursor.execute('''
         CREATE TABLE IF NOT EXISTS users (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
-            email TEXT UNIQUE NOT NULL,
-            password TEXT NOT NULL,
             name TEXT NOT NULL,
+            email TEXT UNIQUE NOT NULL,
+            password_hash TEXT NOT NULL,
+            sex TEXT NOT NULL,           -- male / female
+            birth_date TEXT NOT NULL,
             created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
         )
     ''')
     
+    # Приёмы
+    cursor.execute('''
+        CREATE TABLE IF NOT EXISTS appointments (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            user_id INTEGER NOT NULL,
+            type TEXT NOT NULL,          -- 'стоматолог', 'травматолог' и т.д.
+            description TEXT,
+            appointment_date TEXT NOT NULL,
+            diagnosis TEXT,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            FOREIGN KEY (user_id) REFERENCES users (id) ON DELETE CASCADE
+        )
+    ''')
+
     # Анализы
     cursor.execute('''
         CREATE TABLE IF NOT EXISTS analyses (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             user_id INTEGER NOT NULL,
-            type TEXT NOT NULL,
-            date DATE NOT NULL,
-            result TEXT NOT NULL,
-            unit TEXT,
-            norm_min REAL,
-            norm_max REAL,
-            doctor TEXT,
+            type TEXT NOT NULL,            -- 'кровь', 'давление', 'гормоны' и т.п.
+            analysis_date TEXT NOT NULL,
+            unit TEXT NOT NULL,
+            value TEXT NOT NULL,
             notes TEXT,
-            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            FOREIGN KEY (user_id) REFERENCES users (id) ON DELETE CASCADE
         )
     ''')
     
-    # Приемы врачей
-    cursor.execute('''
-        CREATE TABLE IF NOT EXISTS appointments (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            user_id INTEGER NOT NULL,
-            title TEXT NOT NULL,
-            start_time DATETIME NOT NULL,
-            end_time DATETIME NOT NULL,
-            doctor TEXT,
-            specialty TEXT,
-            location TEXT,
-            status TEXT DEFAULT 'scheduled',
-            notes TEXT,
-            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-        )
-    ''')
-    
-    # Создаем тестового пользователя
-    cursor.execute("SELECT COUNT(*) FROM users WHERE email = 'demo@example.com'")
-    if cursor.fetchone()[0] == 0:
-        cursor.execute(
-            "INSERT INTO users (email, password, name) VALUES (?, ?, ?)",
-            ('demo@example.com', 'demo123', 'Демо Пользователь')
-        )
+    # Демо-пользователь
+    cursor.execute("SELECT 1 FROM users WHERE email = 'demo@example.com'")
+    if not cursor.fetchone():
+        pwd = bcrypt.hashpw('demo123'.encode(), bcrypt.gensalt()).decode()
+        cursor.execute('''
+            INSERT INTO users (name, email, password_hash, sex, birth_date)
+            VALUES (?, ?, ?, ?, ?)
+        ''', ('Демо Пользователь', 'demo@example.com', pwd, 'male', '1990-01-01'))
+        user_id = cursor.lastrowid
+        
+        # Демо-приём
+        cursor.execute('''
+            INSERT INTO appointments (user_id, type, description, appointment_date, diagnosis)
+            VALUES (?, ?, ?, ?, ?)
+        ''', (user_id, 'Терапевт', 'Ежегодный осмотр', '2025-01-10', 'Всё в норме'))
     
     conn.commit()
     conn.close()
 
-# Инициализируем БД при запуске
-init_db()
-
-# ========== ПРОСТЫЕ РОУТЫ ==========
-
+# === Роуты ===
 @app.route('/')
 def home():
+    return jsonify({'message': 'Medical Tracker API', 'status': 'ok'})
+
+# === АВТОРИЗАЦИЯ ===
+@app.route('/api/auth/register', methods=['POST'])
+def register():
+    data = request.get_json()
+    required = ['name', 'email', 'password', 'sex', 'birth_date']
+    if not all(k in data for k in required):
+        return jsonify({'success': False, 'message': 'Все поля обязательны'}), 400
+
+    # Проверка email
+    if '@' not in data['email']:
+        return jsonify({'success': False, 'message': 'Неверный email'}), 400
+
+    conn = get_db()
+    cursor = conn.cursor()
+    
+    # Проверка уникальности email
+    cursor.execute("SELECT id FROM users WHERE email = ?", (data['email'],))
+    if cursor.fetchone():
+        return jsonify({'success': False, 'message': 'Email уже используется'}), 400
+
+    # Хэширование пароля
+    pwd_hash = bcrypt.hashpw(data['password'].encode(), bcrypt.gensalt()).decode()
+    cursor.execute('''
+        INSERT INTO users (name, email, password_hash, sex, birth_date)
+        VALUES (?, ?, ?, ?, ?)
+    ''', (data['name'], data['email'], pwd_hash, data['sex'], data['birth_date']))
+    
+    user_id = cursor.lastrowid
+    conn.commit()
+    conn.close()
+
+    access_token = create_access_token(identity=str(user_id))
     return jsonify({
-        'message': 'API Медицинской книжки',
-        'status': 'работает',
-        'database': DB_PATH
-    })
+        'success': True,
+        'access_token': access_token,
+        'user': {
+            'id': user_id,
+            'name': data['name'],
+            'email': data['email'],
+            'sex': data['sex'],
+            'birth_date': data['birth_date']
+        }
+    }), 201
 
 @app.route('/api/auth/login', methods=['POST'])
 def login():
@@ -101,359 +147,203 @@ def login():
     email = data.get('email')
     password = data.get('password')
     
+    if not email or not password:
+        return jsonify({'success': False, 'message': 'Email и пароль обязательны'}), 400
+
     conn = get_db()
     cursor = conn.cursor()
-    
-    cursor.execute(
-        "SELECT * FROM users WHERE email = ? AND password = ?",
-        (email, password)
-    )
+    cursor.execute("SELECT id, name, email, sex, birth_date, password_hash FROM users WHERE email = ?", (email,))
     user = cursor.fetchone()
     conn.close()
-    
-    if user:
-        return jsonify({
-            'success': True,
-            'user': dict(user),
-            'message': 'Вход выполнен'
-        })
-    else:
-        return jsonify({
-            'success': False,
-            'message': 'Неверный email или пароль'
-        }), 401
 
-@app.route('/api/analyses', methods=['GET'])
-def get_analyses():
-    user_id = request.args.get('user_id', 1)  # Временно: тестовый пользователь
-    
-    conn = get_db()
-    cursor = conn.cursor()
-    
-    cursor.execute(
-        "SELECT * FROM analyses WHERE user_id = ? ORDER BY date DESC",
-        (user_id,)
-    )
-    analyses = [dict(row) for row in cursor.fetchall()]
-    conn.close()
-    
-    return jsonify({'analyses': analyses})
+    if not user or not bcrypt.checkpw(password.encode(), user['password_hash'].encode()):
+        return jsonify({'success': False, 'message': 'Неверные учетные данные'}), 401
 
-@app.route('/api/analyses', methods=['POST'])
-def create_analysis():
-    data = request.get_json()
-    
-    conn = get_db()
-    cursor = conn.cursor()
-    
-    cursor.execute('''
-        INSERT INTO analyses (user_id, type, date, result, unit, norm_min, norm_max, doctor, notes)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-    ''', (
-        data.get('user_id', 1),
-        data['type'],
-        data['date'],
-        data['result'],
-        data.get('unit'),
-        data.get('norm_min'),
-        data.get('norm_max'),
-        data.get('doctor'),
-        data.get('notes')
-    ))
-    
-    conn.commit()
-    analysis_id = cursor.lastrowid
-    conn.close()
-    
+    access_token = create_access_token(identity=str(user['id']))
     return jsonify({
         'success': True,
-        'id': analysis_id,
-        'message': 'Анализ сохранен'
-    }), 201
-
-@app.route('/api/appointments', methods=['POST'])
-def create_appointment():
-    """Создание новой записи к врачу"""
-    data = request.get_json()
-    
-    # Проверка обязательных полей
-    required_fields = ['title', 'start_time', 'end_time']
-    for field in required_fields:
-        if field not in data:
-            return jsonify({
-                'success': False,
-                'message': f'Отсутствует обязательное поле: {field}'
-            }), 400
-    
-    conn = get_db()
-    cursor = conn.cursor()
-    
-    try:
-        cursor.execute('''
-            INSERT INTO appointments (user_id, title, start_time, end_time, 
-                                      doctor, specialty, location, status, notes)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-        ''', (
-            data.get('user_id', 1),
-            data['title'],
-            data['start_time'],
-            data['end_time'],
-            data.get('doctor'),
-            data.get('specialty'),
-            data.get('location'),
-            data.get('status', 'scheduled'),
-            data.get('notes')
-        ))
-        
-        conn.commit()
-        appointment_id = cursor.lastrowid
-        
-        # Получаем созданную запись
-        cursor.execute('SELECT * FROM appointments WHERE id = ?', (appointment_id,))
-        appointment = dict(cursor.fetchone())
-        
-        return jsonify({
-            'success': True,
-            'appointment': appointment,
-            'message': 'Запись к врачу создана'
-        }), 201
-        
-    except Exception as e:
-        conn.rollback()
-        return jsonify({
-            'success': False,
-            'message': f'Ошибка создания записи: {str(e)}'
-        }), 500
-        
-    finally:
-        conn.close()
-
-@app.route('/api/appointments/<int:appointment_id>', methods=['DELETE'])
-def delete_appointment(appointment_id):
-    """Удаление записи к врачу"""
-    conn = get_db()
-    cursor = conn.cursor()
-    
-    cursor.execute('DELETE FROM appointments WHERE id = ?', (appointment_id,))
-    deleted = cursor.rowcount > 0
-    
-    conn.commit()
-    conn.close()
-    
-    if deleted:
-        return jsonify({
-            'success': True,
-            'message': 'Запись удалена'
-        })
-    else:
-        return jsonify({
-            'success': False,
-            'message': 'Запись не найдена'
-        }), 404
-
-@app.route('/api/appointments/<int:appointment_id>', methods=['PUT'])
-def update_appointment(appointment_id):
-    """Обновление записи к врачу"""
-    data = request.get_json()
-    
-    conn = get_db()
-    cursor = conn.cursor()
-    
-    # Проверяем, существует ли запись
-    cursor.execute('SELECT * FROM appointments WHERE id = ?', (appointment_id,))
-    if not cursor.fetchone():
-        conn.close()
-        return jsonify({
-            'success': False,
-            'message': 'Запись не найдена'
-        }), 404
-    
-    try:
-        cursor.execute('''
-            UPDATE appointments 
-            SET title = ?, start_time = ?, end_time = ?, 
-                doctor = ?, specialty = ?, location = ?, 
-                status = ?, notes = ?
-            WHERE id = ?
-        ''', (
-            data.get('title'),
-            data.get('start_time'),
-            data.get('end_time'),
-            data.get('doctor'),
-            data.get('specialty'),
-            data.get('location'),
-            data.get('status'),
-            data.get('notes'),
-            appointment_id
-        ))
-        
-        conn.commit()
-        
-        # Получаем обновленную запись
-        cursor.execute('SELECT * FROM appointments WHERE id = ?', (appointment_id,))
-        appointment = dict(cursor.fetchone())
-        
-        return jsonify({
-            'success': True,
-            'appointment': appointment,
-            'message': 'Запись обновлена'
-        })
-        
-    except Exception as e:
-        conn.rollback()
-        return jsonify({
-            'success': False,
-            'message': f'Ошибка обновления: {str(e)}'
-        }), 500
-        
-    finally:
-        conn.close()
-@app.route('/api/appointments', methods=['GET'])
-def get_appointments():
-    """Получение всех записей пользователя"""
-    user_id = request.args.get('user_id', 1, type=int)
-    
-    conn = get_db()
-    cursor = conn.cursor()
-    
-    try:
-        cursor.execute(
-            "SELECT * FROM appointments WHERE user_id = ? ORDER BY start_time DESC",
-            (user_id,)
-        )
-        rows = cursor.fetchall()
-        appointments = []
-        
-        for row in rows:
-            appointment = dict(row)
-            # Преобразуем datetime в строку для JSON
-            appointment['start_time'] = row['start_time']
-            appointment['end_time'] = row['end_time']
-            appointments.append(appointment)
-        
-        return jsonify({
-            'success': True,
-            'appointments': appointments,
-            'count': len(appointments)
-        })
-        
-    except Exception as e:
-        print(f"Ошибка при получении записей: {e}")
-        return jsonify({
-            'success': False,
-            'message': f'Ошибка сервера: {str(e)}',
-            'appointments': []
-        }), 500
-        
-    finally:
-        conn.close()
-        
-@app.route('/api/dashboard/stats', methods=['GET'])
-def get_stats():
-    user_id = request.args.get('user_id', 1)
-    
-    conn = get_db()
-    cursor = conn.cursor()
-    
-    # Количество анализов
-    cursor.execute("SELECT COUNT(*) FROM analyses WHERE user_id = ?", (user_id,))
-    total_analyses = cursor.fetchone()[0]
-    
-    # Количество приемов
-    cursor.execute("SELECT COUNT(*) FROM appointments WHERE user_id = ?", (user_id,))
-    total_appointments = cursor.fetchone()[0]
-    
-    # Последние анализы
-    cursor.execute(
-        "SELECT * FROM analyses WHERE user_id = ? ORDER BY date DESC LIMIT 3",
-        (user_id,)
-    )
-    recent_analyses = [dict(row) for row in cursor.fetchall()]
-    
-    # Ближайшие приемы
-    cursor.execute('''
-        SELECT * FROM appointments 
-        WHERE user_id = ? AND status = 'scheduled' 
-        ORDER BY start_time ASC LIMIT 3
-    ''', (user_id,))
-    upcoming_appointments = [dict(row) for row in cursor.fetchall()]
-    
-    conn.close()
-    
-    return jsonify({
-        'stats': {
-            'total_analyses': total_analyses,
-            'total_appointments': total_appointments
-        },
-        'recent_analyses': recent_analyses,
-        'upcoming_appointments': upcoming_appointments
+        'access_token': access_token,
+        'user': {
+            'id': user['id'],
+            'name': user['name'],
+            'email': user['email'],
+            'sex': user['sex'],
+            'birth_date': user['birth_date']
+        }
     })
 
-@app.route('/api/auth/register', methods=['POST'])
-def register():
-    """Регистрация нового пользователя"""
-    data = request.get_json()
-    
-    # Проверяем обязательные поля
-    required_fields = ['email', 'password', 'name']
-    for field in required_fields:
-        if field not in data:
-            return jsonify({
-                'success': False,
-                'message': f'Отсутствует обязательное поле: {field}'
-            }), 400
-    
-    email = data['email']
-    password = data['password']
-    name = data['name']
-    
+# === ЗАЩИЩЁННЫЕ РОУТЫ ===
+@app.route('/api/user/profile', methods=['GET'])
+@jwt_required()
+def profile():
+    user_id = int(get_jwt_identity())
     conn = get_db()
     cursor = conn.cursor()
-    
-    try:
-        # Проверяем, не существует ли уже пользователь с таким email
-        cursor.execute("SELECT id FROM users WHERE email = ?", (email,))
-        if cursor.fetchone():
-            return jsonify({
-                'success': False,
-                'message': 'Пользователь с таким email уже существует'
-            }), 400
-        
-        # Создаем нового пользователя
-        cursor.execute(
-            "INSERT INTO users (email, password, name) VALUES (?, ?, ?)",
-            (email, password, name)
-        )
-        
-        user_id = cursor.lastrowid
-        
-        # Получаем созданного пользователя
-        cursor.execute("SELECT * FROM users WHERE id = ?", (user_id,))
-        user = dict(cursor.fetchone())
-        
-        conn.commit()
-        
-        return jsonify({
-            'success': True,
-            'user': user,
-            'message': 'Регистрация успешна'
-        }), 201
-        
-    except Exception as e:
-        conn.rollback()
-        return jsonify({
-            'success': False,
-            'message': f'Ошибка регистрации: {str(e)}'
-        }), 500
-        
-    finally:
-        conn.close()
+    cursor.execute("SELECT id, name, email, sex, birth_date FROM users WHERE id = ?", (user_id,))
+    user = cursor.fetchone()
+    conn.close()
+    if user:
+        return jsonify({'success': True, 'user': dict(user)})
+    return jsonify({'success': False, 'message': 'Пользователь не найден'}), 404
 
+@app.route('/api/appointments', methods=['POST'])
+@jwt_required()
+def create_appointment():
+    user_id = int(get_jwt_identity())
+    data = request.get_json()
+    required = ['type', 'appointment_date']
+    if not all(k in data for k in required):
+        return jsonify({'success': False, 'message': 'Тип и дата обязательны'}), 400
+
+    conn = get_db()
+    cursor = conn.cursor()
+    cursor.execute('''
+        INSERT INTO appointments (user_id, type, description, appointment_date, diagnosis)
+        VALUES (?, ?, ?, ?, ?)
+    ''', (
+        user_id,
+        data['type'],
+        data.get('description', ''),
+        data['appointment_date'],
+        data.get('diagnosis', '')
+    ))
+    conn.commit()
+    appointment_id = cursor.lastrowid
+    cursor.execute("SELECT * FROM appointments WHERE id = ?", (appointment_id,))
+    appointment = dict(cursor.fetchone())
+    conn.close()
+    return jsonify({'success': True, 'appointment': appointment}), 201
+
+@app.route('/api/appointments', methods=['GET'])
+@jwt_required()
+def get_appointments():
+    user_id = int(get_jwt_identity())
+    conn = get_db()
+    cursor = conn.cursor()
+    cursor.execute('''
+        SELECT * FROM appointments
+        WHERE user_id = ?
+        ORDER BY appointment_date DESC
+    ''', (user_id,))
+    appointments = [dict(row) for row in cursor.fetchall()]
+    conn.close()
+    return jsonify({'success': True, 'appointments': appointments})
+
+
+@app.route('/api/appointments/<int:appointment_id>', methods=['PUT'])
+@jwt_required()
+def update_appointment(appointment_id):
+    user_id = int(get_jwt_identity())
+    data = request.get_json() or {}
+
+    conn = get_db()
+    cursor = conn.cursor()
+
+    # Убедимся, что запись принадлежит пользователю
+    cursor.execute(
+        "SELECT id FROM appointments WHERE id = ? AND user_id = ?",
+        (appointment_id, user_id),
+    )
+    if not cursor.fetchone():
+        conn.close()
+        return jsonify({'success': False, 'message': 'Приём не найден'}), 404
+
+    fields = []
+    values = []
+    for key in ['type', 'description', 'appointment_date', 'diagnosis']:
+        if key in data:
+            fields.append(f"{key} = ?")
+            values.append(data[key])
+
+    if not fields:
+        conn.close()
+        return jsonify({'success': False, 'message': 'Нет данных для обновления'}), 400
+
+    values.extend([appointment_id, user_id])
+    cursor.execute(
+        f"UPDATE appointments SET {', '.join(fields)} WHERE id = ? AND user_id = ?",
+        values,
+    )
+    conn.commit()
+    cursor.execute(
+        "SELECT * FROM appointments WHERE id = ? AND user_id = ?",
+        (appointment_id, user_id),
+    )
+    appointment = dict(cursor.fetchone())
+    conn.close()
+    return jsonify({'success': True, 'appointment': appointment})
+
+
+@app.route('/api/appointments/<int:appointment_id>', methods=['DELETE'])
+@jwt_required()
+def delete_appointment(appointment_id):
+    user_id = int(get_jwt_identity())
+
+    conn = get_db()
+    cursor = conn.cursor()
+    cursor.execute(
+        "DELETE FROM appointments WHERE id = ? AND user_id = ?",
+        (appointment_id, user_id),
+    )
+    deleted = cursor.rowcount
+    conn.commit()
+    conn.close()
+
+    if not deleted:
+        return jsonify({'success': False, 'message': 'Приём не найден'}), 404
+
+    return jsonify({'success': True}), 200
+
+
+@app.route('/api/analyses', methods=['POST'])
+@jwt_required()
+def create_analysis():
+    user_id = int(get_jwt_identity())
+    data = request.get_json() or {}
+
+    required = ['type', 'analysis_date', 'unit', 'value']
+    if not all(k in data and data[k] for k in required):
+        return jsonify({'success': False, 'message': 'Тип, дата, единица и значение обязательны'}), 400
+
+    conn = get_db()
+    cursor = conn.cursor()
+    cursor.execute('''
+        INSERT INTO analyses (user_id, type, analysis_date, unit, value, notes)
+        VALUES (?, ?, ?, ?, ?, ?)
+    ''', (
+        user_id,
+        data['type'],
+        data['analysis_date'],
+        data['unit'],
+        str(data['value']),
+        data.get('notes', '')
+    ))
+    conn.commit()
+    analysis_id = cursor.lastrowid
+    cursor.execute("SELECT * FROM analyses WHERE id = ?", (analysis_id,))
+    analysis = dict(cursor.fetchone())
+    conn.close()
+    return jsonify({'success': True, 'analysis': analysis}), 201
+
+
+@app.route('/api/analyses', methods=['GET'])
+@jwt_required()
+def get_analyses():
+    user_id = int(get_jwt_identity())
+    conn = get_db()
+    cursor = conn.cursor()
+    cursor.execute('''
+        SELECT * FROM analyses
+        WHERE user_id = ?
+        ORDER BY analysis_date DESC, created_at DESC
+    ''', (user_id,))
+    analyses = [dict(row) for row in cursor.fetchall()]
+    conn.close()
+    return jsonify({'success': True, 'analyses': analyses})
+
+# === Запуск ===
 if __name__ == '__main__':
-    print(f"База данных: {DB_PATH}")
-    print("Адрес: http://localhost:5000")
-    print("Демо пользователь:")
-    print("Email: demo@example.com")
-    print("Пароль: demo123")
-    
+    init_db()
+    print("✅ Medical Tracker API запущен")
+    print("📧 Демо: demo@example.com / demo123")
     app.run(debug=True, host='0.0.0.0', port=5000)

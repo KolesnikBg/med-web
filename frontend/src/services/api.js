@@ -1,3 +1,4 @@
+// src/services/api.js
 const API_URL = 'http://localhost:5000/api';
 
 class ApiService {
@@ -5,86 +6,117 @@ class ApiService {
     this.token = localStorage.getItem('med_token');
   }
 
+  setToken(token) {
+    this.token = token;
+    localStorage.setItem('med_token', token);
+  }
+
+  clearToken() {
+    this.token = null;
+    localStorage.removeItem('med_token');
+  }
+
   getHeaders() {
-    const headers = {
-      'Content-Type': 'application/json',
-    };
-
-    if (this.token) {
-      headers['Authorization'] = `Bearer ${this.token}`;
-    }
-
+    const headers = { 'Content-Type': 'application/json' };
+    if (this.token) headers['Authorization'] = `Bearer ${this.token}`;
     return headers;
   }
 
   async request(endpoint, options = {}) {
     const url = `${API_URL}${endpoint}`;
-    
-    const config = {
-      ...options,
-      headers: this.getHeaders(),
-    };
+    const config = { ...options, headers: this.getHeaders() };
+    if (options.body) config.body = JSON.stringify(options.body);
 
-    if (options.body) {
-      config.body = JSON.stringify(options.body);
+    const res = await fetch(url, config);
+
+    // Читаем тело один раз, чтобы использовать для разных веток
+    const payload = await res.json().catch(() => ({}));
+    const message = payload?.msg || payload?.message;
+
+    // Токен протух / отсутствует / неверный (JWT 401)
+    if (res.status === 401) {
+      this.clearToken();
+      window.location.href = '/login';
+      throw new Error(message || 'Сессия истекла. Войдите снова');
     }
 
-    try {
-      const response = await fetch(url, config);
-      
-      if (!response.ok) {
-        const errorData = await response.json().catch(() => ({}));
-        throw new Error(errorData.message || `Ошибка: ${response.status}`);
+    // JWT 422 (обычно "Missing Authorization Header", битый токен или Subject must be a string).
+    // Если это про токен — разлогиниваем, иначе отдадим ошибку выше.
+    if (res.status === 422) {
+      if (message && /authorization|token|jwt|signature|expired|subject/i.test(message)) {
+        this.clearToken();
+        window.location.href = '/login';
+        throw new Error('Сессия истекла. Войдите снова');
       }
-
-      return await response.json();
-    } catch (error) {
-      console.error('API Error:', error);
-      throw error;
+      throw new Error(message || 'Ошибка 422');
     }
+
+    if (!res.ok) {
+      throw new Error(message || `Ошибка ${res.status}`);
+    }
+
+    return payload;
   }
 
-  // Авторизация
   async login(email, password) {
-    try {
-      const response = await this.request('/auth/login', {
-        method: 'POST',
-        body: { email, password }
-      });
-      return response;
-    } catch (error) {
-      console.error('Login error:', error);
-      throw error;
-    }
-  }
-
-  // Анализы
-  async getAnalyses(userId = 1) {
-    return this.request(`/analyses?user_id=${userId}`);
-  }
-
-  async createAnalysis(analysisData) {
-    return this.request('/analyses', {
+    const data = await this.request('/auth/login', {
       method: 'POST',
-      body: analysisData
+      body: { email, password }
     });
+    if (data.success && data.access_token) {
+      this.setToken(data.access_token);
+    }
+    return data;
   }
 
-  // Приемы врачей
-  async getAppointments(userId = 1) {
-    return this.request(`/appointments?user_id=${userId}`);
+  async register(userData) {
+    const data = await this.request('/auth/register', {
+      method: 'POST',
+      body: userData
+    });
+    if (data.success && data.access_token) {
+      this.setToken(data.access_token);
+    }
+    return data;
   }
 
-  async createAppointment(appointmentData) {
+  async getProfile() {
+    return this.request('/user/profile');
+  }
+
+  async getAppointments() {
+    return this.request('/appointments');
+  }
+
+  async createAppointment(appointment) {
     return this.request('/appointments', {
       method: 'POST',
-      body: appointmentData
+      body: appointment
     });
   }
 
-  // Статистика
-  async getDashboardStats(userId = 1) {
-    return this.request(`/dashboard/stats?user_id=${userId}`);
+  async updateAppointment(id, updates) {
+    return this.request(`/appointments/${id}`, {
+      method: 'PUT',
+      body: updates,
+    });
+  }
+
+  async deleteAppointment(id) {
+    return this.request(`/appointments/${id}`, {
+      method: 'DELETE',
+    });
+  }
+
+  async getAnalyses() {
+    return this.request('/analyses');
+  }
+
+  async createAnalysis(analysis) {
+    return this.request('/analyses', {
+      method: 'POST',
+      body: analysis
+    });
   }
 }
 

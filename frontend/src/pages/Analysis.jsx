@@ -1,254 +1,205 @@
-import React, { useState, useEffect } from 'react';
-import { Link } from 'react-router-dom';
+// src/pages/Analysis.jsx
+import React, { useEffect, useMemo, useState } from 'react';
+import api from '../services/api';
+
+const TYPE_CONFIG = {
+  'Кровь': { unit: 'г/л', placeholder: 'Например, 130' },
+  'Давление': { unit: 'мм рт. ст.', placeholder: 'Например, 120/80' },
+  'Гормоны': { unit: 'мЕд/л', placeholder: 'Например, 2.5' },
+};
 
 const Analysis = () => {
-  const [analyses, setAnalyses] = useState([]);
-  const [loading, setLoading] = useState(true);
-  const [showForm, setShowForm] = useState(false);
-  
-  const [formData, setFormData] = useState({
-    type: '',
-    date: new Date().toISOString().split('T')[0],
-    result: '',
-    unit: '',
-    norm_min: '',
-    norm_max: '',
-    doctor: '',
-    notes: ''
+  const [form, setForm] = useState({
+    type: 'Кровь',
+    analysis_date: '',
+    unit: TYPE_CONFIG['Кровь'].unit,
+    value: '',
+    notes: '',
   });
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState('');
+  const [analyses, setAnalyses] = useState([]);
+  const [listLoading, setListLoading] = useState(true);
+
+  const currentConfig = useMemo(
+    () => TYPE_CONFIG[form.type] || TYPE_CONFIG['Кровь'],
+    [form.type]
+  );
+
+  const handleChange = (e) => {
+    const { name, value } = e.target;
+
+    if (name === 'type') {
+      const nextType = value;
+      const cfg = TYPE_CONFIG[nextType] || TYPE_CONFIG['Кровь'];
+      setForm((prev) => ({
+        ...prev,
+        type: nextType,
+        unit: cfg.unit,
+      }));
+      return;
+    }
+
+    setForm((prev) => ({ ...prev, [name]: value }));
+  };
+
+  const loadAnalyses = async () => {
+    setListLoading(true);
+    setError('');
+    try {
+      const data = await api.getAnalyses();
+      setAnalyses(data.analyses || []);
+    } catch (err) {
+      setError(err.message || 'Не удалось загрузить анализы');
+    } finally {
+      setListLoading(false);
+    }
+  };
 
   useEffect(() => {
-    fetchAnalyses();
+    loadAnalyses();
   }, []);
 
-  const fetchAnalyses = async () => {
+  const handleSubmit = async (e) => {
+    e.preventDefault();
+    setError('');
+    setLoading(true);
+
     try {
-      const response = await fetch('http://localhost:5000/api/analyses?user_id=1');
-      const data = await response.json();
-      setAnalyses(data.analyses || []);
-    } catch (error) {
-      console.error('Ошибка загрузки анализов:', error);
+      const payload = {
+        type: form.type,
+        analysis_date: form.analysis_date,
+        unit: form.unit,
+        value: form.value,
+        notes: form.notes,
+      };
+      const data = await api.createAnalysis(payload);
+      if (data.success) {
+        setForm((prev) => ({
+          ...prev,
+          analysis_date: '',
+          value: '',
+          notes: '',
+        }));
+        await loadAnalyses();
+      }
+    } catch (err) {
+      setError(err.message || 'Не удалось сохранить анализ');
     } finally {
       setLoading(false);
     }
   };
 
-  const handleSubmit = async (e) => {
-    e.preventDefault();
-    
-    try {
-      const response = await fetch('http://localhost:5000/api/analyses', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({
-          user_id: 1,
-          ...formData
-        }),
-      });
-
-      const data = await response.json();
-      
-      if (response.ok) {
-        setShowForm(false);
-        setFormData({
-          type: '',
-          date: new Date().toISOString().split('T')[0],
-          result: '',
-          unit: '',
-          norm_min: '',
-          norm_max: '',
-          doctor: '',
-          notes: ''
-        });
-        fetchAnalyses(); // Обновляем список
-      } else {
-        alert(data.message || 'Ошибка сохранения');
-      }
-    } catch (error) {
-      console.error('Ошибка:', error);
-      alert('Ошибка соединения с сервером');
-    }
-  };
-
-  const handleChange = (e) => {
-    setFormData({
-      ...formData,
-      [e.target.name]: e.target.value
-    });
-  };
-
-  if (loading) {
-    return <div className="loading">Загрузка анализов...</div>;
-  }
-
   return (
-    <div className="analysis-page">
-      <div className="page-header">
-        <h1>Мои анализы</h1>
-        <button className="add-btn" onClick={() => setShowForm(true)}>
-          + Добавить анализ
-        </button>
+    <div className="dashboard">
+      <h1>Анализы</h1>
+      <p className="dashboard-subtitle">
+        Сохраняйте результаты ключевых анализов и отслеживайте динамику.
+      </p>
+
+      <div className="form-page" style={{ marginBottom: 24 }}>
+        <h2>Новый анализ</h2>
+        <p className="form-page-subtitle">
+          Выберите тип анализа, дату и введите значение. Единица измерения
+          подставится автоматически.
+        </p>
+        {error && <div className="error-message">{error}</div>}
+
+        <form onSubmit={handleSubmit}>
+          <div className="form-row">
+            <div className="form-group">
+              <label>Тип анализа *</label>
+              <select name="type" value={form.type} onChange={handleChange} required>
+                <option value="Кровь">Кровь</option>
+                <option value="Давление">Давление</option>
+                <option value="Гормоны">Гормоны</option>
+              </select>
+            </div>
+            <div className="form-group">
+              <label>Дата сдачи *</label>
+              <input
+                type="date"
+                name="analysis_date"
+                value={form.analysis_date}
+                onChange={handleChange}
+                required
+              />
+            </div>
+          </div>
+
+          <div className="form-row">
+            <div className="form-group">
+              <label>Значение *</label>
+              <input
+                name="value"
+                value={form.value}
+                onChange={handleChange}
+                placeholder={currentConfig.placeholder}
+                required
+              />
+            </div>
+            <div className="form-group">
+              <label>Единица измерения *</label>
+              <input
+                name="unit"
+                value={form.unit}
+                onChange={handleChange}
+                required
+              />
+            </div>
+          </div>
+
+          <div className="form-group">
+            <label>Комментарий врача / заметка</label>
+            <textarea
+              name="notes"
+              rows="3"
+              value={form.notes}
+              onChange={handleChange}
+              placeholder="Например: анализ в норме, пересдать через 6 месяцев"
+            />
+          </div>
+
+          <div className="form-actions">
+            <button type="submit" className="btn btn-primary" disabled={loading}>
+              {loading ? 'Сохранение...' : 'Добавить анализ'}
+            </button>
+          </div>
+        </form>
       </div>
 
-      {/* Форма добавления */}
-      {showForm && (
-        <div className="modal-overlay">
-          <div className="modal">
-            <div className="modal-header">
-              <h2>Новый анализ</h2>
-              <button onClick={() => setShowForm(false)} className="close-btn">
-                ×
-              </button>
-            </div>
-            <form onSubmit={handleSubmit} className="analysis-form">
-              <div className="form-row">
-                <div className="form-group">
-                  <label>Тип анализа *</label>
-                  <input
-                    type="text"
-                    name="type"
-                    value={formData.type}
-                    onChange={handleChange}
-                    required
-                  />
-                </div>
-                <div className="form-group">
-                  <label>Дата *</label>
-                  <input
-                    type="date"
-                    name="date"
-                    value={formData.date}
-                    onChange={handleChange}
-                    required
-                  />
-                </div>
+      <div className="recent-section">
+        <h2>История анализов</h2>
+        {listLoading ? (
+          <div className="loading">Загрузка истории анализов...</div>
+        ) : analyses.length > 0 ? (
+          <div className="appointments-list">
+            {analyses.map((item) => (
+              <div key={item.id} className="appointment-card">
+                <h3>{item.type}</h3>
+                <p>
+                  <strong>Дата:</strong>{' '}
+                  {new Date(item.analysis_date).toLocaleDateString('ru-RU')}
+                </p>
+                <p>
+                  <strong>Значение:</strong> {item.value} {item.unit}
+                </p>
+                {item.notes && (
+                  <p>
+                    <em>Комментарий: {item.notes}</em>
+                  </p>
+                )}
               </div>
-              
-              <div className="form-row">
-                <div className="form-group">
-                  <label>Результат *</label>
-                  <input
-                    type="text"
-                    name="result"
-                    value={formData.result}
-                    onChange={handleChange}
-                    required
-                  />
-                </div>
-                <div className="form-group">
-                  <label>Единица измерения</label>
-                  <input
-                    type="text"
-                    name="unit"
-                    value={formData.unit}
-                    onChange={handleChange}
-                    placeholder="ммоль/л, мг/дл"
-                  />
-                </div>
-              </div>
-              
-              <div className="form-row">
-                <div className="form-group">
-                  <label>Норма (мин)</label>
-                  <input
-                    type="number"
-                    name="norm_min"
-                    value={formData.norm_min}
-                    onChange={handleChange}
-                    step="0.01"
-                  />
-                </div>
-                <div className="form-group">
-                  <label>Норма (макс)</label>
-                  <input
-                    type="number"
-                    name="norm_max"
-                    value={formData.norm_max}
-                    onChange={handleChange}
-                    step="0.01"
-                  />
-                </div>
-              </div>
-              
-              <div className="form-group">
-                <label>Врач</label>
-                <input
-                  type="text"
-                  name="doctor"
-                  value={formData.doctor}
-                  onChange={handleChange}
-                />
-              </div>
-              
-              <div className="form-group">
-                <label>Примечания</label>
-                <textarea
-                  name="notes"
-                  value={formData.notes}
-                  onChange={handleChange}
-                  rows="3"
-                />
-              </div>
-              
-              <div className="form-actions">
-                <button type="button" onClick={() => setShowForm(false)}>
-                  Отмена
-                </button>
-                <button type="submit" className="primary-btn">
-                  Сохранить
-                </button>
-              </div>
-            </form>
+            ))}
           </div>
-        </div>
-      )}
-
-      {/* Список анализов */}
-      {analyses.length > 0 ? (
-        <div className="analysis-list">
-          {analyses.map((analysis) => (
-            <div key={analysis.id} className="analysis-card">
-              <div className="analysis-header">
-                <h3>{analysis.type}</h3>
-                <span className="analysis-date">{analysis.date}</span>
-              </div>
-              <div className="analysis-content">
-                <div className="analysis-result">
-                  <strong>Результат:</strong> {analysis.result} {analysis.unit}
-                </div>
-                {analysis.norm_min && analysis.norm_max && (
-                  <div className="analysis-norm">
-                    <strong>Норма:</strong> {analysis.norm_min} - {analysis.norm_max} {analysis.unit}
-                  </div>
-                )}
-                {analysis.doctor && (
-                  <div className="analysis-doctor">
-                    <strong>Врач:</strong> {analysis.doctor}
-                  </div>
-                )}
-                {analysis.notes && (
-                  <div className="analysis-notes">
-                    <strong>Примечания:</strong> {analysis.notes}
-                  </div>
-                )}
-              </div>
-            </div>
-          ))}
-        </div>
-      ) : (
-        <div className="empty-state">
-          <div className="empty-icon">🩺</div>
-          <h3>Анализы не найдены</h3>
-          <p>Добавьте свой первый анализ</p>
-          <button className="primary-btn" onClick={() => setShowForm(true)}>
-            Добавить анализ
-          </button>
-        </div>
-      )}
+        ) : (
+          <p className="empty-text">Пока нет сохранённых анализов.</p>
+        )}
+      </div>
     </div>
   );
 };
 
 export default Analysis;
+
+
