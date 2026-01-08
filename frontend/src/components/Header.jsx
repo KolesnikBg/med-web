@@ -15,7 +15,7 @@ const Header = ({ user, onLogout }) => {
       <div className="header-container">
         <div className="logo" onClick={() => navigate('/')}>
           <span className="logo-icon">🏥</span>
-          <span className="logo-text">МедКнижка</span>
+          <span className="logo-text">МедДневник</span>
         </div>
 
         <div className="user-info">
