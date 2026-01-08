@@ -1,4 +1,3 @@
-# backend/app.py
 import os
 import sqlite3
 import bcrypt
@@ -8,20 +7,20 @@ from flask_cors import CORS
 from flask_jwt_extended import JWTManager, jwt_required, get_jwt_identity, create_access_token
 from datetime import datetime, timedelta
 
-# === Конфигурация ===
+# конфиг
 app = Flask(__name__)
 app.config['SECRET_KEY'] = os.getenv('SECRET_KEY', 'super-secret-med-key')
 app.config['JWT_ACCESS_TOKEN_EXPIRES'] = timedelta(hours=24)
 CORS(app, origins=['http://localhost:3000'])
 jwt = JWTManager(app)
 
-# Пути
+# пути глобалки (бд)
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 DATA_DIR = os.path.join(BASE_DIR, 'data')
 DB_PATH = os.path.join(DATA_DIR, 'medical.db')
 os.makedirs(DATA_DIR, exist_ok=True)
 
-# === Вспомогательные функции ===
+# инит бд 
 def get_db():
     conn = sqlite3.connect(DB_PATH)
     conn.row_factory = sqlite3.Row
@@ -31,25 +30,25 @@ def init_db():
     conn = get_db()
     cursor = conn.cursor()
     
-    # Пользователи
+    # пользователь
     cursor.execute('''
         CREATE TABLE IF NOT EXISTS users (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             name TEXT NOT NULL,
             email TEXT UNIQUE NOT NULL,
             password_hash TEXT NOT NULL,
-            sex TEXT NOT NULL,           -- male / female
+            sex TEXT NOT NULL,
             birth_date TEXT NOT NULL,
             created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
         )
     ''')
     
-    # Приёмы
+    # приемы
     cursor.execute('''
         CREATE TABLE IF NOT EXISTS appointments (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             user_id INTEGER NOT NULL,
-            type TEXT NOT NULL,          -- 'стоматолог', 'травматолог' и т.д.
+            type TEXT NOT NULL,
             description TEXT,
             appointment_date TEXT NOT NULL,
             diagnosis TEXT,
@@ -58,12 +57,12 @@ def init_db():
         )
     ''')
 
-    # Анализы
+    # анализы
     cursor.execute('''
         CREATE TABLE IF NOT EXISTS analyses (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             user_id INTEGER NOT NULL,
-            type TEXT NOT NULL,            -- 'кровь', 'давление', 'гормоны' и т.п.
+            type TEXT NOT NULL,
             analysis_date TEXT NOT NULL,
             unit TEXT NOT NULL,
             value TEXT NOT NULL,
@@ -72,8 +71,58 @@ def init_db():
             FOREIGN KEY (user_id) REFERENCES users (id) ON DELETE CASCADE
         )
     ''')
-    
-    # Демо-пользователь
+
+    # справочник прививок 
+    cursor.execute('''
+        CREATE TABLE IF NOT EXISTS vaccines (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            name TEXT NOT NULL UNIQUE,
+            description TEXT,
+            category TEXT DEFAULT 'standard',  -- standard, travel, work, custom
+            is_active BOOLEAN DEFAULT 1        -- скрыть/показать
+        )
+    ''')
+
+    # прививки, сделанные пользователем 
+    cursor.execute('''
+        CREATE TABLE IF NOT EXISTS user_vaccinations (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            user_id INTEGER NOT NULL,
+            vaccine_id INTEGER NOT NULL,
+            date_given TEXT NOT NULL,
+            notes TEXT,
+            custom_name TEXT,  -- если прививка добавлена вручную (не из справочника)
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            FOREIGN KEY (user_id) REFERENCES users (id) ON DELETE CASCADE,
+            FOREIGN KEY (vaccine_id) REFERENCES vaccines (id) ON DELETE SET NULL
+        )
+    ''')
+
+    #  справочник прививок
+    cursor.execute("SELECT COUNT(*) FROM vaccines")
+    if cursor.fetchone()[0] == 0:
+        standard_vaccines = [
+            ("Гепатит B", "Защита от вирусного гепатита B", "standard"),
+            ("Корь", "Профилактика кори", "standard"),
+            ("Краснуха", "Защита от краснухи", "standard"),
+            ("Свинка", "Профилактика эпидемического паротита", "standard"),
+            ("Полиомиелит", "Защита от полиомиелита", "standard"),
+            ("Дифтерия", "Профилактика дифтерии", "standard"),
+            ("Коклюш", "Защита от коклюша", "standard"),
+            ("Столбняк", "Профилактика столбняка", "standard"),
+            ("Грипп", "Ежегодная вакцинация от гриппа", "standard"),
+            ("HPV", "Защита от вируса папилломы человека", "standard"),
+            ("Бешенство", "Для лиц, работающих с животными", "work"),
+            ("Жёлтая лихорадка", "Требуется для поездок в Африку/Южную Америку", "travel"),
+            ("Холера", "Рекомендуется при поездках в эндемичные регионы", "travel"),
+        ]
+        for name, desc, cat in standard_vaccines:
+            cursor.execute(
+                "INSERT INTO vaccines (name, description, category) VALUES (?, ?, ?)",
+                (name, desc, cat)
+            )
+
+    # демо пользователь
     cursor.execute("SELECT 1 FROM users WHERE email = 'demo@example.com'")
     if not cursor.fetchone():
         pwd = bcrypt.hashpw('demo123'.encode(), bcrypt.gensalt()).decode()
@@ -83,21 +132,29 @@ def init_db():
         ''', ('Демо Пользователь', 'demo@example.com', pwd, 'male', '1990-01-01'))
         user_id = cursor.lastrowid
         
-        # Демо-приём
         cursor.execute('''
             INSERT INTO appointments (user_id, type, description, appointment_date, diagnosis)
             VALUES (?, ?, ?, ?, ?)
         ''', (user_id, 'Терапевт', 'Ежегодный осмотр', '2025-01-10', 'Всё в норме'))
-    
+
+        # демо прививка
+        cursor.execute("SELECT id FROM vaccines WHERE name = 'Гепатит B'")
+        vac_id = cursor.fetchone()
+        if vac_id:
+            cursor.execute('''
+                INSERT INTO user_vaccinations (user_id, vaccine_id, date_given, notes)
+                VALUES (?, ?, ?, ?)
+            ''', (user_id, vac_id[0], '2023-05-20', 'Без побочных эффектов'))
+
     conn.commit()
     conn.close()
 
-# === Роуты ===
+# РОУТЫ
 @app.route('/')
 def home():
     return jsonify({'message': 'Medical Tracker API', 'status': 'ok'})
 
-# === АВТОРИЗАЦИЯ ===
+# авторизация
 @app.route('/api/auth/register', methods=['POST'])
 def register():
     data = request.get_json()
@@ -105,19 +162,19 @@ def register():
     if not all(k in data for k in required):
         return jsonify({'success': False, 'message': 'Все поля обязательны'}), 400
 
-    # Проверка email
+    # проверка почты
     if '@' not in data['email']:
         return jsonify({'success': False, 'message': 'Неверный email'}), 400
 
     conn = get_db()
     cursor = conn.cursor()
     
-    # Проверка уникальности email
+    # уникальность почты 
     cursor.execute("SELECT id FROM users WHERE email = ?", (data['email'],))
     if cursor.fetchone():
         return jsonify({'success': False, 'message': 'Email уже используется'}), 400
 
-    # Хэширование пароля
+    # хеширование пароля 
     pwd_hash = bcrypt.hashpw(data['password'].encode(), bcrypt.gensalt()).decode()
     cursor.execute('''
         INSERT INTO users (name, email, password_hash, sex, birth_date)
@@ -172,7 +229,7 @@ def login():
         }
     })
 
-# === ЗАЩИЩЁННЫЕ РОУТЫ ===
+# ЗАЩ РОУТЫ 
 @app.route('/api/user/profile', methods=['GET'])
 @jwt_required()
 def profile():
@@ -239,7 +296,7 @@ def update_appointment(appointment_id):
     conn = get_db()
     cursor = conn.cursor()
 
-    # Убедимся, что запись принадлежит пользователю
+    # принадлежность записи пользователю 
     cursor.execute(
         "SELECT id FROM appointments WHERE id = ? AND user_id = ?",
         (appointment_id, user_id),
@@ -341,9 +398,114 @@ def get_analyses():
     conn.close()
     return jsonify({'success': True, 'analyses': analyses})
 
-# === Запуск ===
+# прививки
+@app.route('/api/vaccines', methods=['GET'])
+def get_vaccines():
+    """Получить список всех прививок (справочник)"""
+    show_all = request.args.get('all', 'false').lower() == 'true'
+    conn = get_db()
+    cursor = conn.cursor()
+    if show_all:
+        cursor.execute("SELECT * FROM vaccines ORDER BY category, name")
+    else:
+        cursor.execute("SELECT * FROM vaccines WHERE is_active = 1 ORDER BY category, name")
+    vaccines = [dict(row) for row in cursor.fetchall()]
+    conn.close()
+    return jsonify({'success': True, 'vaccines': vaccines})
+
+
+@app.route('/api/user/vaccinations', methods=['GET'])
+@jwt_required()
+def get_user_vaccinations():
+    """Получить прививки, сделанные пользователем"""
+    user_id = int(get_jwt_identity())
+    conn = get_db()
+    cursor = conn.cursor()
+    cursor.execute('''
+        SELECT uv.*, v.name as vaccine_name, v.category
+        FROM user_vaccinations uv
+        LEFT JOIN vaccines v ON uv.vaccine_id = v.id
+        WHERE uv.user_id = ?
+        ORDER BY uv.date_given DESC
+    ''', (user_id,))
+    vaccinations = [dict(row) for row in cursor.fetchall()]
+    conn.close()
+    return jsonify({'success': True, 'vaccinations': vaccinations})
+
+
+@app.route('/api/user/vaccinations', methods=['POST'])
+@jwt_required()
+def add_user_vaccination():
+    """Отметить прививку как сделанную"""
+    user_id = int(get_jwt_identity())
+    data = request.get_json() or {}
+
+    date_given = data.get('date_given')
+    notes = data.get('notes', '')
+    
+    if not date_given:
+        return jsonify({'success': False, 'message': 'Дата обязательна'}), 400
+
+    conn = get_db()
+    cursor = conn.cursor()
+
+    # Вариант 1: прививка из справочника
+    vaccine_id = data.get('vaccine_id')
+    custom_name = None
+
+    if vaccine_id:
+        # Проверяем, существует ли такая прививка
+        cursor.execute("SELECT id FROM vaccines WHERE id = ?", (vaccine_id,))
+        if not cursor.fetchone():
+            return jsonify({'success': False, 'message': 'Прививка не найдена'}), 404
+    else:
+        # Вариант 2: пользователь добавляет свою прививку
+        custom_name = data.get('custom_name')
+        if not custom_name:
+            return jsonify({'success': False, 'message': 'Укажите название прививки'}), 400
+
+    cursor.execute('''
+        INSERT INTO user_vaccinations (user_id, vaccine_id, date_given, notes, custom_name)
+        VALUES (?, ?, ?, ?, ?)
+    ''', (user_id, vaccine_id, date_given, notes, custom_name))
+
+    conn.commit()
+    vaccination_id = cursor.lastrowid
+    cursor.execute('''
+        SELECT uv.*, v.name as vaccine_name
+        FROM user_vaccinations uv
+        LEFT JOIN vaccines v ON uv.vaccine_id = v.id
+        WHERE uv.id = ?
+    ''', (vaccination_id,))
+    vaccination = dict(cursor.fetchone())
+    conn.close()
+
+    return jsonify({'success': True, 'vaccination': vaccination}), 201
+
+
+@app.route('/api/user/vaccinations/<int:vaccination_id>', methods=['DELETE'])
+@jwt_required()
+def delete_user_vaccination(vaccination_id):
+    """Удалить запись о прививке"""
+    user_id = int(get_jwt_identity())
+    conn = get_db()
+    cursor = conn.cursor()
+    cursor.execute(
+        "DELETE FROM user_vaccinations WHERE id = ? AND user_id = ?",
+        (vaccination_id, user_id)
+    )
+    deleted = cursor.rowcount
+    conn.commit()
+    conn.close()
+    if not deleted:
+        return jsonify({'success': False, 'message': 'Прививка не найдена'}), 404
+    return jsonify({'success': True}), 200
+
+
+
+# Старт
 if __name__ == '__main__':
     init_db()
-    print("✅ Medical Tracker API запущен")
-    print("📧 Демо: demo@example.com / demo123")
+    print("API запущен")
+    print("Демо-пользователь: demo@example.com | demo123")
     app.run(debug=True, host='0.0.0.0', port=5000)

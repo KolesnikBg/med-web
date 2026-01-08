@@ -24,7 +24,6 @@ const AddAppointment = () => {
     setLoading(true);
 
     try {
-      // Отправляем ТОЛЬКО то, что ожидает твой бэкенд
       const data = await api.createAppointment({
         type: formData.type,
         appointment_date: formData.appointment_date,
@@ -45,9 +44,6 @@ const AddAppointment = () => {
   return (
     <div className="form-page">
       <h2>Новая запись к врачу</h2>
-      <p className="form-page-subtitle">
-        Укажите специалиста, дату визита и, при желании, опишите жалобы и рекомендации врача.
-      </p>
       {error && <div className="error-message">{error}</div>}
       <form onSubmit={handleSubmit}>
         <div className="form-group">
@@ -103,7 +99,7 @@ const AddAppointment = () => {
         </div>
 
         <div className="form-actions">
-          <button type="submit" className="btn btn-primary" disabled={loading}>
+          <button type="submit" disabled={loading}>
             {loading ? 'Сохранение...' : 'Добавить приём'}
           </button>
           <button

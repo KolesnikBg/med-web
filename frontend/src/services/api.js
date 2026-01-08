@@ -1,4 +1,3 @@
-// src/services/api.js
 const API_URL = 'http://localhost:5000/api';
 
 class ApiService {
@@ -29,19 +28,18 @@ class ApiService {
 
     const res = await fetch(url, config);
 
-    // Читаем тело один раз, чтобы использовать для разных веток
+    // прочитаем один раз, чтобы использовать для разных веток
     const payload = await res.json().catch(() => ({}));
     const message = payload?.msg || payload?.message;
 
-    // Токен протух / отсутствует / неверный (JWT 401)
+    // токен отсутствует/неверный(JWT 401)
     if (res.status === 401) {
       this.clearToken();
       window.location.href = '/login';
       throw new Error(message || 'Сессия истекла. Войдите снова');
     }
 
-    // JWT 422 (обычно "Missing Authorization Header", битый токен или Subject must be a string).
-    // Если это про токен — разлогиниваем, иначе отдадим ошибку выше.
+    // JWT 422
     if (res.status === 422) {
       if (message && /authorization|token|jwt|signature|expired|subject/i.test(message)) {
         this.clearToken();
@@ -118,6 +116,44 @@ class ApiService {
       body: analysis
     });
   }
+
+  async updateAnalysis(id, updates) {
+    return this.request(`/analyses/${id}`, {
+      method: 'PUT',
+      body: updates,
+    });
+  }
+
+  async deleteAnalysis(id) {
+    return this.request(`/analyses/${id}`, {
+      method: 'DELETE',
+    });
+  }
+
+   async getVaccines(showAll = false) {
+    const query = showAll ? '?all=true' : '';
+    return this.request(`/vaccines${query}`);
+  }
+
+  async getUserVaccinations() {
+    return this.request('/user/vaccinations');
+  }
+
+  async addUserVaccination(vaccinationData) {
+    return this.request('/user/vaccinations', {
+      method: 'POST',
+      body: vaccinationData
+    });
+  }
+
+  async deleteUserVaccination(id) {
+    return this.request(`/user/vaccinations/${id}`, {
+      method: 'DELETE'
+    });
+  }
+
 }
+
+
 
 export default new ApiService();

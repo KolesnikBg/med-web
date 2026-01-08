@@ -1,4 +1,3 @@
-// src/App.jsx
 import React, { useState, useEffect } from 'react';
 import { BrowserRouter as Router, Routes, Route, Navigate } from 'react-router-dom';
 import Login from './pages/Login';
@@ -8,7 +7,9 @@ import AddAppointment from './pages/AddAppointment';
 import Appointments from './pages/Appointments';
 import Analysis from './pages/Analysis';
 import Profile from './pages/Profile';
+import Vaccinations from './pages/Vaccinations';
 import Header from './components/Header';
+import Footer from './components/Footer';
 import './styles/global.css';
 import './styles/pages.css';
 
@@ -59,8 +60,10 @@ function App() {
             <Route path="/appointments" element={isAuthenticated ? <Appointments /> : <Navigate to="/login" />} />
             <Route path="/analysis" element={isAuthenticated ? <Analysis /> : <Navigate to="/login" />} />
             <Route path="/profile" element={isAuthenticated ? <Profile user={user} /> : <Navigate to="/login" />} />
+            <Route path="/vaccinations" element={isAuthenticated ? <Vaccinations /> : <Navigate to="/login" />} />
           </Routes>
         </div>
+        {isAuthenticated && <Footer user={user} onLogout={handleLogout} />}
       </div>
     </Router>
   );
