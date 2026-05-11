@@ -2,6 +2,7 @@
 import React, { useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import api from '../services/api';
+import '../styles/register.css';  // стили
 
 const Login = ({ onLogin }) => {
   const [email, setEmail] = useState('demo@example.com');
@@ -31,33 +32,41 @@ const Login = ({ onLogin }) => {
   return (
     <div className="auth-container">
       <div className="auth-card">
-        <h2>Вход в МедКнижку</h2>
+        <h2>Вход в МедДневник</h2>
         {error && <div className="error-message">{error}</div>}
         <form onSubmit={handleSubmit}>
-          <div className="form-group">
-            <label>Email</label>
-            <input
-              type="email"
-              value={email}
-              onChange={(e) => setEmail(e.target.value)}
-              required
-            />
+          <div className='block'>
+            <div className="form-group">
+              <h3>Эл. почта</h3>
+              <input
+                type="email"
+                value={email}
+                onChange={(e) => setEmail(e.target.value)}
+                required
+              />
+            </div>
           </div>
-          <div className="form-group">
-            <label>Пароль</label>
-            <input
-              type="password"
-              value={password}
-              onChange={(e) => setPassword(e.target.value)}
-              required
-            />
+          <div className='block'>
+            <div className="form-group">
+              <h3>Пароль</h3>
+              <input
+                type="password"
+                value={password}
+                onChange={(e) => setPassword(e.target.value)}
+                required
+              />
+            </div>
           </div>
-          <button type="submit" disabled={loading}>
-            {loading ? 'Вход...' : 'Войти'}
-          </button>
+          <div className='block'>
+            <div className='form-row'>
+              <button type="submit" disabled={loading} className='register-btn'>
+                {loading ? 'Вход...' : 'Войти'}
+              </button>
+            </div>
+          </div>
         </form>
         <div className="auth-links">
-          <span>Нет аккаунта?</span>
+          <span>Нет аккаунта? </span>
           <Link to="/register">Регистрация</Link>
         </div>
       </div>

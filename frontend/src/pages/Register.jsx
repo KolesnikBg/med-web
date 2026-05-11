@@ -1,136 +1,271 @@
-// src/pages/Register.jsx
-import React, { useState } from 'react';
-import { Link, useNavigate } from 'react-router-dom';
-import api from '../services/api';
+import React, { useState } from 'react';  // подключение реакт
+import { Link, useNavigate } from 'react-router-dom';  // навигация между страницами
+import api from '../services/api';  // апи для работы с бэкендом
+import '../styles/register.css';  // стили
+import { useValidation } from '../hooks/useValidation.js'; // хук 
 
+/*
+* ЛОГИКА
+*/
 const Register = ({ onRegister }) => {
+
+  // данные формы
   const [formData, setFormData] = useState({
     name: '',
+    lastname: '',
+    patronymic: '',
     email: '',
     password: '',
     confirmPassword: '',
     sex: 'male',
     birth_date: ''
   });
-  const [error, setError] = useState('');
+
+  // общая ошибка (над формой)
+  const [error, setError] = useState('');  // текст ошибки для пользователя 
+
+  // ошибки по полям
+  const [fieldErrors, setFieldErrors] = useState({});
+
+  // флаг загрузки (блокировка кнопки)
   const [loading, setLoading] = useState(false);
+
+  // навигация (для перехода на другую страницу)
   const navigate = useNavigate();
 
+  // подключение валидации из хука
+  const { validate } = useValidation(formData);
+
+  // обработка ввода
   const handleChange = (e) => {
-    setFormData({ ...formData, [e.target.name]: e.target.value });
+
+    // берем имя и его значение
+    const { name, value } = e.target;
+
+    // обновляем только это поле
+    setFormData({ ...formData, [name]: value });
+
+    // очистка ошибку поля при вводе
+    if (fieldErrors[name]) {
+      setFieldErrors({ ...fieldErrors, [name]: '' });
+    }
   };
 
-  const validate = () => {
-    if (formData.password !== formData.confirmPassword) {
-      setError('Пароли не совпадают');
-      return false;
-    }
-    if (formData.password.length < 6) {
-      setError('Пароль должен быть от 6 символов');
-      return false;
-    }
-    if (!formData.name || formData.name.trim().length < 2) {
-      setError('Введите ФИО');
-      return false;
-    }
-    return true;
+  // чекбокс
+  const [isChecked, setIsChecked] = useState(false);
+
+  // проверка чекбокса
+  const handleCheckboxChange = (event) => {
+    setIsChecked(event.target.checked);
   };
 
+  // отправка формы
   const handleSubmit = async (e) => {
-    e.preventDefault();
+    e.preventDefault(); // запрет перезагрузки страницы
     setError('');
-    if (!validate()) return;
+    setFieldErrors({});
 
-    setLoading(true);
+    // валидация через хук
+    const { isValid, errors } = validate();
+    if (!isValid) {
+      setFieldErrors(errors); // показываем ошибки под полями
+      return;
+    }
+
+    // отправка на сервер
+    setLoading(true); // включение "загрузки"
     try {
-      const data = await api.register({
+      const data = await api.register({ // ждм ответа от бэка
         name: formData.name,
+        lastname: formData.lastname,
+        patronymic: formData.patronymic,
         email: formData.email,
         password: formData.password,
         sex: formData.sex,
         birth_date: formData.birth_date
       });
+
+      // успех
       if (data.success) {
-        onRegister(data.user, data.access_token);
-        navigate('/');
+        onRegister(data.user, data.access_token); // передача данных родителю
+        navigate('/'); // переход на главную
       }
     } catch (err) {
-      setError(err.message || 'Ошибка регистрации');
+      // обработка 409 Conflict и других ошибок
+      if (err.status === 409 || err.message?.includes('409')) {
+        setError('Этот email уже зарегистрирован');
+        setFieldErrors({ email: 'Email занят' }); // подсветка поля
+      } else if (err.status === 400) {
+        setError('Проверьте правильность заполнения формы');
+      } else {
+        setError(err.message || 'Ошибка регистрации. Попробуйте позже');
+      }
     } finally {
-      setLoading(false);
+      setLoading(false); // отключаем загрузку 
     }
   };
+
+  /*
+  * ОТРИСОВКА 
+  */
 
   return (
     <div className="auth-container">
       <div className="auth-card">
         <h2>Регистрация</h2>
+
+        {/* Общая ошибка */}
         {error && <div className="error-message">{error}</div>}
-        <form onSubmit={handleSubmit}>
-          <div className="form-group">
-            <label>ФИО *</label>
-            <input
-              name="name"
-              value={formData.name}
-              onChange={handleChange}
-              required
-            />
-          </div>
-          <div className="form-group">
-            <label>Email *</label>
-            <input
-              type="email"
-              name="email"
-              value={formData.email}
-              onChange={handleChange}
-              required
-            />
-          </div>
-          <div className="form-row">
-            <div className="form-group">
-              <label>Пол *</label>
-              <select name="sex" value={formData.sex} onChange={handleChange} required>
-                <option value="male">Мужской</option>
-                <option value="female">Женский</option>
-              </select>
+
+        <form onSubmit={handleSubmit} noValidate> {/* отключение валидацию браузера */}
+
+          {/* ФИО */}
+          <div className='block'>
+            <h3>ФИО</h3>
+            <div className="form-row">
+              <div className="form-group">
+                <input
+                  name="lastname"
+                  value={formData.lastname}
+                  onChange={handleChange}
+                  placeholder="Фамилия*"
+                  required
+                  minLength={2}
+                />
+                {fieldErrors.lastname && <span className="field-error">{fieldErrors.lastname}</span>}
+              </div>
+              <div className="form-group">
+                <input
+                  name="name"
+                  value={formData.name}
+                  onChange={handleChange}
+                  placeholder="Имя*"
+                  required
+                  minLength={2}
+                  pattern="[А-Яа-яA-Za-z\s\-]+" // только буквы, пробелы, дефис
+                  title="Только буквы, пробелы и дефис"
+                />
+                {fieldErrors.name && <span className="field-error">{fieldErrors.name}</span>}
+              </div>
+              <div className="form-group">
+                <input
+                  name="patronymic"
+                  value={formData.patronymic}
+                  onChange={handleChange}
+                  placeholder="Отчество"
+                  pattern="[А-Яа-яA-Za-z\s\-]+"
+                />
+                {fieldErrors.patronymic && <span className="field-error">{fieldErrors.patronymic}</span>}
+              </div>
             </div>
+          </div>
+
+          {/* Email */}
+          <div className="block">
             <div className="form-group">
-              <label>Дата рождения *</label>
+              <h3>Эл. почта</h3>
               <input
-                type="date"
-                name="birth_date"
-                value={formData.birth_date}
+                type="email"
+                name="email"
+                value={formData.email}
                 onChange={handleChange}
                 required
+                placeholder="example@mail.ru"
+                pattern="[a-z0-9._%+-]+@[a-z0-9.-]+\.[a-z]{2,}$" // ← HTML5-паттерн
+                title="Введите корректный email"
+                autoComplete="email"
               />
+              {fieldErrors.email && <span className="field-error">{fieldErrors.email}</span>}
             </div>
           </div>
-          <div className="form-group">
-            <label>Пароль *</label>
-            <input
-              type="password"
-              name="password"
-              value={formData.password}
-              onChange={handleChange}
-              required
-            />
+
+          {/* Пол + Дата */}
+          <div className="block">
+            <div className="form-row-2">
+              <div className="form-group">
+                <h3>Пол</h3>
+                <select name="sex" value={formData.sex} onChange={handleChange} required>
+                  <option value="male">Мужской</option>
+                  <option value="female">Женский</option>
+                </select>
+              </div>
+              <div className="form-group">
+                <h3>Дата рождения</h3>
+                <input
+                  type="date"
+                  name="birth_date"
+                  value={formData.birth_date}
+                  onChange={handleChange}
+                  required
+                  max={new Date().toISOString().split('T')[0]} // нельзя выбрать будущее
+                />
+                {fieldErrors.birth_date && <span className="field-error">{fieldErrors.birth_date}</span>}
+              </div>
+            </div>
           </div>
-          <div className="form-group">
-            <label>Подтвердите пароль *</label>
-            <input
-              type="password"
-              name="confirmPassword"
-              value={formData.confirmPassword}
-              onChange={handleChange}
-              required
-            />
+
+          {/* Пароль */}
+          <div className='block'>
+            <div className="form-group">
+              <h3>Пароль</h3>
+              <input
+                type="password"
+                name="password"
+                value={formData.password}
+                onChange={handleChange}
+                required
+                minLength={6} //  HTML5-валидация
+                pattern="(?=.*[a-zA-Z])(?=.*\d).+" // ← минимум буква + цифра (опционально)
+                title="Минимум 6 символов, включая буквы и цифры"
+                autoComplete="new-password"
+              />
+              {fieldErrors.password && <span className="field-error">{fieldErrors.password}</span>}
+            </div>
           </div>
-          <button type="submit" disabled={loading}>
-            {loading ? 'Регистрация...' : 'Зарегистрироваться'}
-          </button>
+
+          {/* Подтверждение пароля */}
+          <div className='block'>
+            <div className="form-group">
+              <h3>Подтвердите пароль</h3>
+              <input
+                type="password"
+                name="confirmPassword"
+                value={formData.confirmPassword}
+                onChange={handleChange}
+                required
+                minLength={6}
+                autoComplete="new-password"
+              />
+              {fieldErrors.confirmPassword && <span className="field-error">{fieldErrors.confirmPassword}</span>}
+            </div>
+          </div>
+          <div className='block'>
+            <div className='form-row-3'>
+              <input
+                type="checkbox"
+                checked={isChecked}
+                onChange={handleCheckboxChange}
+                style={{
+                  cursor: 'pointer',
+                }} />
+              <span>Я согласен на обработку персональных данных и с условиями
+                пользовательского соглашения
+              </span>
+              {/* {isChecked ? "Выбрано" : "Не выбрано"} */}
+            </div>
+          </div>
+
+          <div className='block'>
+            <div className='form-row'>
+              <button type="submit" disabled={loading} className='register-btn'>
+                {loading ? 'Регистрация...' : 'Зарегистрироваться'}
+              </button>
+            </div>
+          </div>
         </form>
+
         <div className="auth-links">
-          <span>Уже есть аккаунт?</span>
+          <span>Уже есть аккаунт? </span>
           <Link to="/login">Войти</Link>
         </div>
       </div>

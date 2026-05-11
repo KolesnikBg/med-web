@@ -30,6 +30,7 @@ const Profile = ({ user }) => {
         <p><strong>Пол:</strong> {sexLabel}</p>
         <p><strong>Дата рождения:</strong> {new Date(user.birth_date).toLocaleDateString('ru-RU')}</p>
         <p><strong>Полных лет:</strong> {age}</p>
+        <p><strong>С нами с:</strong> {new Date(user.created_at).toLocaleDateString('ru-RU')}</p>
       </div>
     </div>
   );

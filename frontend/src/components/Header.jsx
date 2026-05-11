@@ -1,6 +1,7 @@
 import React from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import './Header.css';
+import '../styles/global.css'
 
 const Header = ({ user, onLogout }) => {
   const navigate = useNavigate();
@@ -13,14 +14,9 @@ const Header = ({ user, onLogout }) => {
   return (
     <header className="header">
       <div className="header-container">
-        <div className="logo" onClick={() => navigate('/')}>
-          <span className="logo-icon">🏥</span>
-          <span className="logo-text">МедДневник</span>
-        </div>
+        
 
-        <div className="user-info">
-          <span>Привет, {user?.name || 'Пользователь'}!</span>
-        </div>
+        
 
         <nav className="nav">
           <Link to="/" className="nav-link">
@@ -35,10 +31,18 @@ const Header = ({ user, onLogout }) => {
           <Link to="/profile" className="nav-link">
             Профиль
           </Link>
+        </nav>
+        <div className="user-info">
+          <span>{user?.name || user?.lastname}</span>
           <button onClick={handleLogout} className="logout-btn" type="button">
             Выйти
-          </button>
-        </nav>
+        </button>
+        </div>
+        
+          {/* <div className="logo" onClick={() => navigate('/')}>
+          <span className="logo-icon">🏥</span>
+          <span className="logo-text">{user.name}</span>
+        </div> */}
       </div>
     </header>
   );

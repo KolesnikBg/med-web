@@ -11,7 +11,7 @@ import Vaccinations from './pages/Vaccinations';
 import Header from './components/Header';
 import Footer from './components/Footer';
 import './styles/global.css';
-import './styles/pages.css';
+// import './styles/pages.css';
 
 function App() {
   const [isAuthenticated, setIsAuthenticated] = useState(false);

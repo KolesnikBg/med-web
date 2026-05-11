@@ -66,6 +66,12 @@
   background-color: #ff3742;
 }
 
+.user-info {
+  display: flex;
+  gap: 20px;
+  align-items: center;
+}
+
 /* Адаптивность */
 @media (max-width: 768px) {
   .header-container {
