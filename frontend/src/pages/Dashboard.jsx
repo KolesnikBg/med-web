@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { Link } from 'react-router-dom';
 import api from '../services/api';
+import Calendar from '../components/Calendar/Calendar';
 
 // Справочник рекомендуемых прививок по возрасту (можно вынести в конфиг)
 const VACCINE_SCHEDULE = [
@@ -104,6 +105,10 @@ const Dashboard = ({ user }) => {
       <p className="dashboard-subtitle">
         Здесь собраны ваши недавние приёмы, анализы и прививки.
       </p>
+
+      <div className="App">
+      <Calendar />
+    </div>
 
       <div className="quick-actions">
         <Link to="/add-appointment" className="btn btn-primary">+ Добавить прием</Link>

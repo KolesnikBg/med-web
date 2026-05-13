@@ -152,6 +152,80 @@ class ApiService {
     });
   }
 
+    // ============ 📅 КАЛЕНДАРЬ ============
+
+  /**
+   * Получить все события для календаря (приёмы + анализы + прививки)
+   * @returns {Promise<{success: boolean, events: Array}>}
+   */
+  async getCalendarEvents() {
+    return this.request('/calendar/events');
+  }
+
+  /**
+   * Добавить событие в календарь (универсальный метод)
+   * @param {Object} eventData - { table, title, date, description, extra? }
+   * @returns {Promise<{success: boolean, id: string}>}
+   */
+  async addCalendarEvent(eventData) {
+    return this.request('/calendar/events', {
+      method: 'POST',
+      body: eventData
+    });
+  }
+
+  /**
+   * Удалить событие из календаря по таблице и ID
+   * @param {string} table - 'appointments' | 'analyses' | 'user_vaccinations'
+   * @param {number} recordId - ID записи в таблице
+   * @returns {Promise<{success: boolean}>}
+   */
+  async deleteCalendarEvent(table, recordId) {
+    // Маршрут зависит от таблицы — делегируем к существующим методам
+    if (table === 'appointments') {
+      return this.deleteAppointment(recordId);
+    } else if (table === 'analyses') {
+      return this.deleteAnalysis(recordId);
+    } else if (table === 'user_vaccinations') {
+      return this.deleteUserVaccination(recordId);
+    }
+    throw new Error('Неизвестная таблица');
+  }
+
+  /**
+   * Обновить событие в календарь (делегирование)
+   */
+  async updateCalendarEvent(table, recordId, updates) {
+    if (table === 'appointments') {
+      return this.updateAppointment(recordId, updates);
+    } else if (table === 'analyses') {
+      return this.updateAnalysis(recordId, updates);
+    } else if (table === 'user_vaccinations') {
+      // Для прививок пока нет update — можно добавить на бэке при необходимости
+      throw new Error('Редактирование прививок пока не поддерживается');
+    }
+    throw new Error('Неизвестная таблица');
+  }
+
+    async updateUserVaccination(id, updates) {
+    return this.request(`/user/vaccinations/${id}`, {
+      method: 'PUT',
+      body: updates
+    });
+  }
+
+  // Обновите updateCalendarEvent:
+  async updateCalendarEvent(table, recordId, updates) {
+    if (table === 'appointments') {
+      return this.updateAppointment(recordId, updates);
+    } else if (table === 'analyses') {
+      return this.updateAnalysis(recordId, updates);
+    } else if (table === 'user_vaccinations') {
+      return this.updateUserVaccination(recordId, updates); // ✅ новое
+    }
+    throw new Error('Неизвестная таблица');
+  }
+
 }
 
 

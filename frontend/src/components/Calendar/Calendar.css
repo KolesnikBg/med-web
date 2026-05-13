@@ -1,0 +1,139 @@
+.calendar-wrapper {
+  max-width: 1200px;
+  margin: 0 auto;
+  padding: 20px;
+}
+
+.calendar-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 20px;
+  flex-wrap: wrap;
+  gap: 10px;
+}
+
+.calendar-header h2 {
+  margin: 0;
+  color: #1f2937;
+}
+
+.calendar-legend {
+  display: flex;
+  gap: 15px;
+  font-size: 14px;
+  color: #4b5563;
+}
+
+.legend-item {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.dot {
+  width: 12px;
+  height: 12px;
+  border-radius: 50%;
+  display: inline-block;
+}
+
+.dot.appointment { background: #3b82f6; }
+.dot.analysis { background: #8b5cf6; }
+.dot.vaccine { background: #10b981; }
+
+/* FullCalendar кастомизация */
+.fc { font-family: inherit; }
+.fc-toolbar-title { font-size: 20px !important; }
+.fc-button { 
+  background: #3b82f6 !important; 
+  border: none !important;
+  text-transform: capitalize !important;
+}
+.fc-button:hover { background: #2563eb !important; }
+
+.fc-event {
+  cursor: pointer;
+  border-radius: 4px !important;
+  padding: 2px 6px !important;
+  font-size: 13px !important;
+  border: none !important;
+}
+
+.fc-event:hover { opacity: 0.9; }
+
+/* Модальное окно */
+.modal-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(0,0,0,0.5);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 1000;
+}
+
+.modal-content {
+  background: white;
+  padding: 24px;
+  border-radius: 12px;
+  min-width: 350px;
+  max-width: 500px;
+  position: relative;
+  box-shadow: 0 10px 25px rgba(0,0,0,0.2);
+}
+
+.modal-close {
+  position: absolute;
+  top: 10px;
+  right: 12px;
+  background: none;
+  border: none;
+  font-size: 24px;
+  cursor: pointer;
+  color: #6b7280;
+}
+
+.modal-close:hover { color: #1f2937; }
+
+.modal-body {
+  margin: 16px 0;
+  color: #4b5563;
+  line-height: 1.6;
+}
+
+.modal-body p { margin: 8px 0; }
+.modal-body strong { color: #1f2937; }
+
+.modal-actions {
+  display: flex;
+  gap: 10px;
+  justify-content: flex-end;
+}
+
+.btn-edit, .btn-delete {
+  padding: 8px 16px;
+  border: none;
+  border-radius: 6px;
+  cursor: pointer;
+  font-size: 14px;
+}
+
+.btn-edit { background: #3b82f6; color: white; }
+.btn-delete { background: #ef4444; color: white; }
+
+/* Загрузка / ошибки */
+.calendar-loading, .calendar-error {
+  text-align: center;
+  padding: 40px;
+  color: #6b7280;
+}
+.calendar-error button {
+  margin-top: 12px;
+  padding: 8px 16px;
+  background: #3b82f6;
+  color: white;
+  border: none;
+  border-radius: 6px;
+  cursor: pointer;
+}

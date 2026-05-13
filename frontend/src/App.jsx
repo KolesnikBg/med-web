@@ -10,6 +10,7 @@ import Profile from './pages/Profile';
 import Vaccinations from './pages/Vaccinations';
 import Header from './components/Header';
 import Footer from './components/Footer';
+import Calendar from './components/Calendar/Calendar';
 import './styles/global.css';
 // import './styles/pages.css';
 

@@ -501,7 +501,254 @@ def delete_user_vaccination(vaccination_id):
         return jsonify({'success': False, 'message': 'Прививка не найдена'}), 404
     return jsonify({'success': True}), 200
 
+# ============ 📅 КАЛЕНДАРЬ: получение всех событий ============
+@app.route('/api/calendar/events', methods=['GET'])
+@jwt_required()
+def get_calendar_events():
+    """
+    Агрегирует события из appointments, analyses и user_vaccinations
+    для отображения в календаре FullCalendar
+    """
+    user_id = int(get_jwt_identity())
+    events = []
+    
+    try:
+        conn = get_db()
+        cursor = conn.cursor()
+        
+        # ===== 1. ПРИЁМЫ У ВРАЧЕЙ (appointments) =====
+        cursor.execute('''
+            SELECT id, type, description, appointment_date, diagnosis
+            FROM appointments
+            WHERE user_id = ? AND appointment_date IS NOT NULL
+            ORDER BY appointment_date DESC
+        ''', (user_id,))
+        appointments = cursor.fetchall()
+        
+        for appt in appointments:
+            events.append({
+                'id': f'appt_{appt["id"]}',
+                'title': f'🩺 {appt["type"]}',
+                'start': appt['appointment_date'],  # YYYY-MM-DD
+                'className': 'event-appointment',
+                'backgroundColor': '#3b82f6',
+                'borderColor': '#2563eb',
+                'extendedProps': {
+                    'type': 'Приём',
+                    'description': appt['description'] or '',
+                    'diagnosis': appt['diagnosis'] or '',
+                    'table': 'appointments',
+                    'record_id': appt['id']
+                }
+            })
+        
+        # ===== 2. АНАЛИЗЫ (analyses) =====
+        cursor.execute('''
+            SELECT id, type, value, unit, analysis_date, notes
+            FROM analyses
+            WHERE user_id = ? AND analysis_date IS NOT NULL
+            ORDER BY analysis_date DESC
+        ''', (user_id,))
+        analyses = cursor.fetchall()
+        
+        for analysis in analyses:
+            events.append({
+                'id': f'analysis_{analysis["id"]}',
+                'title': f'🧪 {analysis["type"]}: {analysis["value"]} {analysis["unit"]}',
+                'start': analysis['analysis_date'],
+                'className': 'event-analysis',
+                'backgroundColor': '#8b5cf6',
+                'borderColor': '#7c3aed',
+                'extendedProps': {
+                    'type': 'Анализ',
+                    'description': analysis['notes'] or '',
+                    'value': f'{analysis["value"]} {analysis["unit"]}',
+                    'table': 'analyses',
+                    'record_id': analysis['id']
+                }
+            })
+        
+        # ===== 3. ПРИВИВКИ (user_vaccinations + vaccines) =====
+        cursor.execute('''
+            SELECT uv.id, uv.date_given, uv.notes, uv.custom_name,
+                   v.name as vaccine_name, v.category
+            FROM user_vaccinations uv
+            LEFT JOIN vaccines v ON uv.vaccine_id = v.id
+            WHERE uv.user_id = ? AND uv.date_given IS NOT NULL
+            ORDER BY uv.date_given DESC
+        ''', (user_id,))
+        vaccinations = cursor.fetchall()
+        
+        for vac in vaccinations:
+            vaccine_name = vac['custom_name'] or vac['vaccine_name'] or 'Прививка'
+            category = vac['category'] or 'standard'
+            
+            # Цвет в зависимости от категории
+            colors = {
+                'standard': ('#10b981', '#059669'),
+                'travel': ('#f59e0b', '#d97706'),
+                'work': ('#ef4444', '#dc2626'),
+                'custom': ('#6b7280', '#4b5563')
+            }
+            bg, border = colors.get(category, colors['standard'])
+            
+            events.append({
+                'id': f'vac_{vac["id"]}',
+                'title': f'💉 {vaccine_name}',
+                'start': vac['date_given'],
+                'className': f'event-vaccine event-{category}',
+                'backgroundColor': bg,
+                'borderColor': border,
+                'extendedProps': {
+                    'type': 'Прививка',
+                    'description': vac['notes'] or '',
+                    'category': category,
+                    'table': 'user_vaccinations',
+                    'record_id': vac['id']
+                }
+            })
+        
+        conn.close()
+        
+        # Сортируем все события по дате (опционально, FullCalendar сам сортирует)
+        events.sort(key=lambda x: x['start'])
+        
+        return jsonify({'success': True, 'events': events}), 200
+        
+    except Exception as e:
+        print(f"Calendar error: {e}")
+        return jsonify({'success': False, 'message': str(e)}), 500
 
+
+# ============ 📅 КАЛЕНДАРЬ: добавление события (универсальный) ============
+@app.route('/api/calendar/events', methods=['POST'])
+@jwt_required()
+def add_calendar_event():
+    """
+    Универсальный эндпоинт для добавления события в любую таблицу
+    Body:
+    {
+        "table": "appointments" | "analyses" | "user_vaccinations",
+        "title": "Название",
+        "date": "2024-12-25",
+        "description": "Описание",
+        "extra": {...}  # доп. поля для конкретной таблицы
+    }
+    """
+    user_id = int(get_jwt_identity())
+    data = request.get_json() or {}
+    
+    table = data.get('table')
+    title = data.get('title')
+    event_date = data.get('date')
+    description = data.get('description', '')
+    
+    # Валидация
+    if not all([table, title, event_date]):
+        return jsonify({'success': False, 'message': 'table, title и date обязательны'}), 400
+    
+    # Проверка формата даты
+    try:
+        datetime.strptime(event_date, '%Y-%m-%d')
+    except ValueError:
+        return jsonify({'success': False, 'message': 'Дата в формате YYYY-MM-DD'}), 400
+    
+    try:
+        conn = get_db()
+        cursor = conn.cursor()
+        
+        if table == 'appointments':
+            cursor.execute('''
+                INSERT INTO appointments (user_id, type, description, appointment_date)
+                VALUES (?, ?, ?, ?)
+            ''', (user_id, title, description, event_date))
+            
+        elif table == 'analyses':
+            extra = data.get('extra', {})
+            cursor.execute('''
+                INSERT INTO analyses (user_id, type, analysis_date, unit, value, notes)
+                VALUES (?, ?, ?, ?, ?, ?)
+            ''', (
+                user_id,
+                title,
+                event_date,
+                extra.get('unit', ''),
+                str(extra.get('value', '')),
+                description
+            ))
+            
+        elif table == 'user_vaccinations':
+            extra = data.get('extra', {})
+            vaccine_id = extra.get('vaccine_id')  # может быть None
+            custom_name = extra.get('custom_name')
+            
+            cursor.execute('''
+                INSERT INTO user_vaccinations (user_id, vaccine_id, date_given, notes, custom_name)
+                VALUES (?, ?, ?, ?, ?)
+            ''', (user_id, vaccine_id, event_date, description, custom_name))
+            
+        else:
+            return jsonify({'success': False, 'message': 'Неизвестная таблица'}), 400
+        
+        conn.commit()
+        new_id = cursor.lastrowid
+        conn.close()
+        
+        return jsonify({
+            'success': True,
+            'message': 'Событие создано',
+            'id': f'{table}_{new_id}'
+        }), 201
+        
+    except Exception as e:
+        return jsonify({'success': False, 'message': str(e)}), 500
+
+
+@app.route('/api/user/vaccinations/<int:vaccination_id>', methods=['PUT'])
+@jwt_required()
+def update_user_vaccination(vaccination_id):
+    """Обновить запись о прививке"""
+    user_id = int(get_jwt_identity())
+    data = request.get_json() or {}
+    
+    conn = get_db()
+    cursor = conn.cursor()
+    
+    # Проверка принадлежности
+    cursor.execute(
+        "SELECT id FROM user_vaccinations WHERE id = ? AND user_id = ?",
+        (vaccination_id, user_id)
+    )
+    if not cursor.fetchone():
+        conn.close()
+        return jsonify({'success': False, 'message': 'Прививка не найдена'}), 404
+    
+    # Обновление полей
+    fields = []
+    values = []
+    for key in ['date_given', 'notes', 'custom_name']:
+        if key in data:
+            fields.append(f"{key} = ?")
+            values.append(data[key])
+    
+    if fields:
+        values.extend([vaccination_id, user_id])
+        cursor.execute(
+            f"UPDATE user_vaccinations SET {', '.join(fields)} WHERE id = ? AND user_id = ?",
+            values
+        )
+        conn.commit()
+    
+    cursor.execute('''
+        SELECT uv.*, v.name as vaccine_name, v.category
+        FROM user_vaccinations uv
+        LEFT JOIN vaccines v ON uv.vaccine_id = v.id
+        WHERE uv.id = ?
+    ''', (vaccination_id,))
+    result = dict(cursor.fetchone())
+    conn.close()
+    
+    return jsonify({'success': True, 'vaccination': result})
 
 # Старт
 if __name__ == '__main__':
