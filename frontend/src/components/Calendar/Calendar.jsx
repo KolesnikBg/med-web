@@ -3,20 +3,22 @@ import FullCalendar from '@fullcalendar/react';
 import dayGridPlugin from '@fullcalendar/daygrid';
 import interactionPlugin from '@fullcalendar/interaction';
 import ruLocale from '@fullcalendar/core/locales/ru';
+import timeGridPlugin from '@fullcalendar/timegrid';
+import multiMonthPlugin from '@fullcalendar/multimonth';
 import './Calendar.css';
 import api from '../../services/api';
 
 // Типы событий
 const EVENT_TYPES = {
-  APPOINTMENT: 'appointments',
-  ANALYSIS: 'analyses',
-  VACCINATION: 'user_vaccinations'
+    APPOINTMENT: 'appointments',
+    ANALYSIS: 'analyses',
+    VACCINATION: 'user_vaccinations'
 };
 
 const TYPE_LABELS = {
-  [EVENT_TYPES.APPOINTMENT]: 'Приём у врача',
-  [EVENT_TYPES.ANALYSIS]: 'Анализ',
-  [EVENT_TYPES.VACCINATION]: 'Прививка'
+    [EVENT_TYPES.APPOINTMENT]: 'Приём у врача',
+    [EVENT_TYPES.ANALYSIS]: 'Анализ',
+    [EVENT_TYPES.VACCINATION]: 'Прививка'
 };
 
 const Calendar = () => {
@@ -24,12 +26,27 @@ const Calendar = () => {
     const [loading, setLoading] = useState(true);
     const [error, setError] = useState(null);
     const [selectedEvent, setSelectedEvent] = useState(null);
-    
+
     // Состояния модальных окон
     const [showViewModal, setShowViewModal] = useState(false);   // просмотр
     const [showFormModal, setShowFormModal] = useState(false);   // создание/редактирование
     const [formMode, setFormMode] = useState('create');          // 'create' | 'edit'
-    
+    const [currentView, setCurrentView] = useState('dayGridMonth');
+
+    // Функция для сохранения в localStorage:
+    const handleViewChange = (viewName) => {
+        setCurrentView(viewName);
+        localStorage.setItem('calendar_view', viewName);
+    };
+
+    // В useEffect при загрузке:
+    useEffect(() => {
+        const savedView = localStorage.getItem('calendar_view');
+        if (savedView && ['dayGridMonth', 'timeGridWeek', 'multiMonthYear'].includes(savedView)) {
+            setCurrentView(savedView);
+        }
+    }, []);
+
     // Состояния формы
     const [formData, setFormData] = useState({
         table: EVENT_TYPES.APPOINTMENT,
@@ -38,7 +55,7 @@ const Calendar = () => {
         description: '',
         extra: {}
     });
-    
+
     // Список прививок для выбора (загружается один раз)
     const [vaccines, setVaccines] = useState([]);
 
@@ -51,7 +68,14 @@ const Calendar = () => {
         try {
             setLoading(true);
             const data = await api.getCalendarEvents();
-            if (data.success) setEvents(data.events);
+            if (data.success) {
+                // ✅ Превращаем все события в all-day для корректного отображения в timeGrid
+                const formattedEvents = data.events.map(event => ({
+                    ...event,
+                    allDay: true  // ← КЛЮЧЕВОЕ: событие на весь день
+                }));
+                setEvents(formattedEvents);
+            }
             else throw new Error(data.message || 'Ошибка загрузки');
             setError(null);
         } catch (err) {
@@ -72,15 +96,15 @@ const Calendar = () => {
     };
 
     // === Обработчики формы ===
-    
+
     const handleFormChange = (field, value) => {
         setFormData(prev => ({ ...prev, [field]: value }));
     };
 
     const handleExtraChange = (field, value) => {
-        setFormData(prev => ({ 
-            ...prev, 
-            extra: { ...prev.extra, [field]: value } 
+        setFormData(prev => ({
+            ...prev,
+            extra: { ...prev.extra, [field]: value }
         }));
     };
 
@@ -122,7 +146,7 @@ const Calendar = () => {
 
     const handleSubmit = async (e) => {
         e.preventDefault();
-        
+
         try {
             if (formMode === 'create') {
                 await api.addCalendarEvent(formData);
@@ -131,10 +155,10 @@ const Calendar = () => {
                     formData.table,
                     selectedEvent.recordId,
                     {
-                        [formData.table === EVENT_TYPES.APPOINTMENT ? 'type' : 
-                         formData.table === EVENT_TYPES.ANALYSIS ? 'type' : 'custom_name']: formData.title,
+                        [formData.table === EVENT_TYPES.APPOINTMENT ? 'type' :
+                            formData.table === EVENT_TYPES.ANALYSIS ? 'type' : 'custom_name']: formData.title,
                         [formData.table === EVENT_TYPES.APPOINTMENT ? 'appointment_date' :
-                         formData.table === EVENT_TYPES.ANALYSIS ? 'analysis_date' : 'date_given']: formData.date,
+                            formData.table === EVENT_TYPES.ANALYSIS ? 'analysis_date' : 'date_given']: formData.date,
                         description: formData.description,
                         ...(formData.table === EVENT_TYPES.ANALYSIS && {
                             unit: formData.extra.unit,
@@ -143,7 +167,7 @@ const Calendar = () => {
                     }
                 );
             }
-            
+
             await fetchEvents();
             setShowFormModal(false);
             resetForm();
@@ -217,8 +241,36 @@ const Calendar = () => {
             </div>
 
             <FullCalendar
-                plugins={[dayGridPlugin, interactionPlugin]}
-                initialView="dayGridMonth"
+                height="auto"
+                aspectRatio={1.5}  // ← пропорция ширины к высоте (меняйте под дизайн)
+                eventDisplay="block"
+                plugins={[
+                    dayGridPlugin,      // Месяц
+                    timeGridPlugin,     // Неделя/День
+                    multiMonthPlugin,   // Год
+                    interactionPlugin   // Клик/выбор даты
+                ]}
+
+                views={{
+                    dayGridMonth: {
+                        type: 'dayGrid',
+                        duration: { months: 1 },
+                        buttonText: 'Месяц',
+                        dayMaxEvents: 3
+                    },
+                    dayGridWeek: {  // ← НЕ timeGridWeek!
+                        type: 'dayGrid',
+                        duration: { weeks: 1 },
+                        buttonText: 'Неделя',
+                        dayMaxEvents: 5
+                    },
+                    multiMonthYear: {
+                        type: 'multiMonth',
+                        duration: { months: 12 },
+                        buttonText: 'Год',
+                        multiMonthMaxColumns: 3
+                    }
+                }}
                 locale={ruLocale}
                 events={events}
                 eventContent={renderEventContent}
@@ -226,14 +278,51 @@ const Calendar = () => {
                 selectable={true}
                 select={handleDateSelect}
                 headerToolbar={{
-                    left: 'prev,next today',
+                    left: 'prev,next',
                     center: 'title',
-                    right: 'dayGridMonth'
+                    right: 'dayGridMonth,dayGridWeek,multiMonthYear'  // ← dayGridWeek, не timeGridWeek!
                 }}
-                buttonText={{ today: 'Сегодня', month: 'Месяц' }}
-                firstDay={1}
+                buttonText={{
+                    today: 'Сегодня',
+                    month: 'Месяц',
+                    week: 'Неделя',
+                    year: 'Год'
+                }}
+                firstDay={1} // Неделя с понедельника
                 height="auto"
                 eventDisplay="block"
+                // Обработка отображения в разных видах
+                eventDidMount={(info) => {
+                    // Добавляем тултип с описанием при наведении
+                    if (info.event.extendedProps.description) {
+                        info.el.title = info.event.extendedProps.description;
+                    }
+                }}
+
+                // Адаптация под мобильные
+                handleWindowResize={true}
+
+                initialView={currentView}
+                datesSet={(dateInfo) => {
+                    // Сохраняем вид при переключении
+                    const viewName = dateInfo.view.type;
+                    if (viewName !== currentView) {
+                        handleViewChange(viewName);
+                    }
+                }}
+                selectable={true}
+    select={handleDateSelect}
+    selectLongPressDelay={100}  // ← быстрее реакция на долгий тап
+    eventLongPressDelay={100}
+    
+    // Добавьте это для надёжности на мобильных:
+    eventClick={handleEventClick}
+    dateClick={(info) => {
+        // dateClick работает надёжнее select на мобильных
+        if (window.innerWidth <= 768) {
+            openCreateForm(info.dateStr);
+        }
+    }}
             />
 
             {/* 🔍 Модальное окно ПРОСМОТРА */}
@@ -274,13 +363,13 @@ const Calendar = () => {
                     <div className="modal-content modal-form" onClick={e => e.stopPropagation()}>
                         <button className="modal-close" onClick={() => setShowFormModal(false)}>×</button>
                         <h3>{formMode === 'create' ? '➕ Новое событие' : '✏️ Редактирование'}</h3>
-                        
+
                         <form onSubmit={handleSubmit} className="event-form">
                             {/* Выбор типа события (только при создании) */}
                             {formMode === 'create' && (
                                 <div className="form-group">
                                     <label>Тип события *</label>
-                                    <select 
+                                    <select
                                         value={formData.table}
                                         onChange={(e) => handleFormChange('table', e.target.value)}
                                         required
@@ -334,8 +423,8 @@ const Calendar = () => {
                                         onChange={(e) => handleFormChange('title', e.target.value)}
                                         placeholder={
                                             formData.table === EVENT_TYPES.APPOINTMENT ? 'Терапевт, Кардиолог...' :
-                                            formData.table === EVENT_TYPES.ANALYSIS ? 'Общий анализ крови, Холестерин...' :
-                                            'Название'
+                                                formData.table === EVENT_TYPES.ANALYSIS ? 'Общий анализ крови, Холестерин...' :
+                                                    'Название'
                                         }
                                         required
                                     />
@@ -390,8 +479,8 @@ const Calendar = () => {
                                     onChange={(e) => handleFormChange('description', e.target.value)}
                                     placeholder={
                                         formData.table === EVENT_TYPES.APPOINTMENT ? 'Диагноз, рекомендации...' :
-                                        formData.table === EVENT_TYPES.ANALYSIS ? 'Комментарий к результату...' :
-                                        'Место, реакция, серия...'
+                                            formData.table === EVENT_TYPES.ANALYSIS ? 'Комментарий к результату...' :
+                                                'Место, реакция, серия...'
                                     }
                                 />
                             </div>

@@ -1,139 +1,439 @@
+/* === БАЗА === */
 .calendar-wrapper {
-  max-width: 1200px;
+  width: 100%;
+  max-width: 100%;
   margin: 0 auto;
-  padding: 20px;
+  padding: 8px;
+  box-sizing: border-box;
 }
 
 .calendar-header {
   display: flex;
   justify-content: space-between;
   align-items: center;
-  margin-bottom: 20px;
+  margin-bottom: 12px;
   flex-wrap: wrap;
-  gap: 10px;
+  gap: 8px;
+  padding: 0 4px;
 }
 
 .calendar-header h2 {
   margin: 0;
+  font-size: 18px;
   color: #1f2937;
+  font-weight: 600;
 }
 
 .calendar-legend {
   display: flex;
-  gap: 15px;
-  font-size: 14px;
-  color: #4b5563;
+  gap: 10px;
+  font-size: 12px;
+  color: #6b7280;
+  flex-wrap: wrap;
 }
 
 .legend-item {
   display: flex;
   align-items: center;
-  gap: 6px;
+  gap: 4px;
 }
 
 .dot {
-  width: 12px;
-  height: 12px;
+  width: 8px;
+  height: 8px;
   border-radius: 50%;
   display: inline-block;
 }
-
 .dot.appointment { background: #3b82f6; }
 .dot.analysis { background: #8b5cf6; }
 .dot.vaccine { background: #10b981; }
 
-/* FullCalendar кастомизация */
-.fc { font-family: inherit; }
-.fc-toolbar-title { font-size: 20px !important; }
-.fc-button { 
-  background: #3b82f6 !important; 
-  border: none !important;
-  text-transform: capitalize !important;
+/* === FULLCALENDAR — БАЗОВЫЕ СТИЛИ === */
+.fc {
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+  font-size: 13px;
+  width: 100%;
 }
-.fc-button:hover { background: #2563eb !important; }
 
+.fc-toolbar {
+  margin-bottom: 8px !important;
+}
+
+.fc-toolbar-title {
+  font-size: 16px !important;
+  font-weight: 600;
+}
+
+.fc-button {
+  background: #3b82f6 !important;
+  border: none !important;
+  border-radius: 6px !important;
+  padding: 6px 10px !important;
+  font-size: 12px !important;
+  text-transform: capitalize !important;
+  min-height: 36px;
+  min-width: 36px;
+}
+
+.fc-button:hover {
+  background: #2563eb !important;
+}
+
+.fc-button-active {
+  background: #1d4ed8 !important;
+}
+
+/* События */
 .fc-event {
   cursor: pointer;
   border-radius: 4px !important;
-  padding: 2px 6px !important;
-  font-size: 13px !important;
+  padding: 2px 4px !important;
+  font-size: 11px !important;
   border: none !important;
+  margin: 1px 0 !important;
 }
 
-.fc-event:hover { opacity: 0.9; }
+.fc-event:hover {
+  opacity: 0.95;
+  transform: scale(1.02);
+}
 
-/* Модальное окно */
+.fc-event-title {
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 100%;
+}
+
+/* Дни календаря */
+.fc-daygrid-day {
+  min-height: 80px;
+}
+
+.fc-daygrid-day-number {
+  padding: 4px 6px !important;
+  font-size: 12px;
+  font-weight: 500;
+}
+
+/* === МОДАЛКИ === */
 .modal-overlay {
   position: fixed;
   inset: 0;
-  background: rgba(0,0,0,0.5);
+  background: rgba(0, 0, 0, 0.7);
   display: flex;
   align-items: center;
   justify-content: center;
   z-index: 1000;
+  padding: 16px;
+  animation: fadeIn 0.2s;
 }
 
 .modal-content {
   background: white;
-  padding: 24px;
-  border-radius: 12px;
-  min-width: 350px;
-  max-width: 500px;
+  padding: 20px;
+  border-radius: 16px;
+  width: 100%;
+  max-width: 480px;
+  max-height: 90vh;
+  overflow-y: auto;
   position: relative;
-  box-shadow: 0 10px 25px rgba(0,0,0,0.2);
+  box-shadow: 0 25px 50px rgba(0, 0, 0, 0.25);
+  animation: slideUp 0.3s;
 }
 
 .modal-close {
   position: absolute;
-  top: 10px;
+  top: 12px;
   right: 12px;
-  background: none;
+  background: #f3f4f6;
   border: none;
-  font-size: 24px;
+  border-radius: 50%;
+  width: 32px;
+  height: 32px;
+  font-size: 20px;
   cursor: pointer;
   color: #6b7280;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  line-height: 1;
 }
 
-.modal-close:hover { color: #1f2937; }
+.modal-close:hover {
+  background: #e5e7eb;
+  color: #1f2937;
+}
 
 .modal-body {
   margin: 16px 0;
   color: #4b5563;
-  line-height: 1.6;
-}
-
-.modal-body p { margin: 8px 0; }
-.modal-body strong { color: #1f2937; }
-
-.modal-actions {
-  display: flex;
-  gap: 10px;
-  justify-content: flex-end;
-}
-
-.btn-edit, .btn-delete {
-  padding: 8px 16px;
-  border: none;
-  border-radius: 6px;
-  cursor: pointer;
+  line-height: 1.5;
   font-size: 14px;
 }
 
-.btn-edit { background: #3b82f6; color: white; }
-.btn-delete { background: #ef4444; color: white; }
-
-/* Загрузка / ошибки */
-.calendar-loading, .calendar-error {
-  text-align: center;
-  padding: 40px;
-  color: #6b7280;
+.modal-body p {
+  margin: 6px 0;
 }
-.calendar-error button {
-  margin-top: 12px;
-  padding: 8px 16px;
-  background: #3b82f6;
-  color: white;
+
+.modal-body strong {
+  color: #1f2937;
+  font-weight: 600;
+}
+
+.modal-actions {
+  display: flex;
+  gap: 8px;
+  justify-content: flex-end;
+  padding-top: 16px;
+  border-top: 1px solid #e5e7eb;
+  flex-wrap: wrap;
+}
+
+.modal-actions button {
+  padding: 10px 16px;
   border: none;
-  border-radius: 6px;
+  border-radius: 8px;
   cursor: pointer;
+  font-size: 14px;
+  font-weight: 500;
+  min-height: 44px;
+  min-width: 44px;
+  transition: all 0.2s;
+}
+
+.btn-primary { background: #3b82f6; color: white; }
+.btn-primary:hover { background: #2563eb; }
+
+.btn-edit { background: #6366f1; color: white; }
+.btn-edit:hover { background: #4f46e5; }
+
+.btn-delete { background: #ef4444; color: white; }
+.btn-delete:hover { background: #dc2626; }
+
+.modal-actions button:not(.btn-primary):not(.btn-edit):not(.btn-delete) {
+  background: #e5e7eb;
+  color: #374151;
+}
+.modal-actions button:not(.btn-primary):not(.btn-edit):not(.btn-delete):hover {
+  background: #d1d5db;
+}
+
+/* === ФОРМА === */
+.modal-form { max-width: 480px; }
+
+.event-form {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.form-group {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.form-group label {
+  font-weight: 500;
+  color: #374151;
+  font-size: 14px;
+}
+
+.form-group input,
+.form-group select,
+.form-group textarea {
+  padding: 12px;
+  border: 1px solid #d1d5db;
+  border-radius: 8px;
+  font-size: 14px;
+  min-height: 44px;
+  width: 100%;
+  box-sizing: border-box;
+}
+
+.form-group input:focus,
+.form-group select:focus,
+.form-group textarea:focus {
+  outline: none;
+  border-color: #3b82f6;
+  box-shadow: 0 0 0 3px rgba(59, 130, 246, 0.15);
+}
+
+.form-row {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 10px;
+}
+
+/* === АНИМАЦИИ === */
+@keyframes fadeIn { from { opacity: 0; } to { opacity: 1; } }
+@keyframes slideUp {
+  from { transform: translateY(20px); opacity: 0; }
+  to { transform: translateY(0); opacity: 1; }
+}
+
+/* === 📱 МОБИЛЬНЫЙ АДАПТИВ — АГРЕССИВНЫЙ === */
+
+/* Планшеты и меньше */
+@media (max-width: 768px) {
+  .calendar-wrapper { padding: 4px; }
+  
+  .calendar-header {
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 8px;
+  }
+  
+  .calendar-header h2 { font-size: 16px; }
+  
+  .calendar-legend {
+    width: 100%;
+    justify-content: space-around;
+  }
+  
+  /* Toolbar: кнопки в столбик */
+  .fc .fc-toolbar {
+    flex-direction: column;
+    gap: 8px;
+  }
+  
+  .fc .fc-toolbar-chunk {
+    display: flex;
+    justify-content: center;
+    gap: 4px;
+    flex-wrap: wrap;
+    width: 100%;
+  }
+  
+  .fc-toolbar-title {
+    font-size: 14px !important;
+    order: -1;
+    width: 100%;
+    text-align: center;
+  }
+  
+  .fc-button {
+    padding: 8px 12px !important;
+    font-size: 11px !important;
+    min-height: 40px;
+  }
+  
+  /* События крупнее для тача */
+  .fc-event {
+    font-size: 12px !important;
+    padding: 4px 6px !important;
+  }
+  
+  /* Дни календаря ниже */
+  .fc-daygrid-day { min-height: 70px; }
+  
+  /* Год: 2 колонки */
+  .fc .fc-multi-month-view {
+    --fc-multi-month-cols: 2;
+  }
+}
+
+/* Телефоны — ПОЛНЫЙ ЭКРАН ДЛЯ МОДАЛОК */
+@media (max-width: 480px) {
+  .calendar-wrapper { padding: 2px; }
+  
+  /* Модалка на весь экран снизу вверх */
+  .modal-overlay {
+    padding: 0;
+    align-items: flex-end;
+  }
+  
+  .modal-content {
+    width: 100%;
+    max-width: 100%;
+    max-height: 95vh;
+    border-radius: 20px 20px 0 0;
+    margin: 0;
+    animation: slideUpMobile 0.3s ease;
+  }
+  
+  .modal-close {
+    top: 16px;
+    right: 16px;
+    width: 44px;
+    height: 44px;
+    font-size: 28px;
+  }
+  
+  /* Форма: всё в одну колонку */
+  .form-row { grid-template-columns: 1fr; }
+  
+  /* Кнопки на всю ширину */
+  .modal-actions {
+    flex-direction: column-reverse;
+    gap: 10px;
+  }
+  
+  .modal-actions button {
+    width: 100%;
+    padding: 14px;
+    font-size: 16px;
+  }
+  
+  /* Календарь: максимальная читаемость */
+  .fc { font-size: 12px; }
+  
+  .fc-daygrid-day-number {
+    padding: 6px 8px !important;
+    font-size: 13px;
+    font-weight: 600;
+  }
+  
+  .fc-event {
+    font-size: 11px !important;
+    padding: 3px 5px !important;
+  }
+  
+  .fc-event-title {
+    max-width: 90%;
+  }
+  
+  /* Год: 1 колонка */
+  .fc .fc-multi-month-view {
+    --fc-multi-month-cols: 1;
+  }
+  
+  /* Скрываем лишнее в неделе */
+  .fc .fc-day-other .fc-daygrid-day-top {
+    opacity: 0.3;
+  }
+}
+
+/* Очень маленькие экраны */
+@media (max-width: 360px) {
+  .fc { font-size: 11px; }
+  .fc-daygrid-day { min-height: 60px; }
+  .fc-event { font-size: 10px !important; }
+  .legend-item { font-size: 11px; }
+}
+
+/* Анимация для мобильных модалок */
+@keyframes slideUpMobile {
+  from { transform: translateY(100%); }
+  to { transform: translateY(0); }
+}
+
+/* Тёмная тема (опционально) */
+@media (prefers-color-scheme: dark) {
+  .modal-content { background: #1f2937; color: #f9fafb; }
+  .modal-body { color: #d1d5db; }
+  .modal-body strong { color: #f9fafb; }
+  .form-group input,
+  .form-group select,
+  .form-group textarea {
+    background: #374151;
+    border-color: #4b5563;
+    color: #f9fafb;
+  }
+  .modal-actions button:not(.btn-primary):not(.btn-edit):not(.btn-delete) {
+    background: #374151;
+    color: #f9fafb;
+  }
 }

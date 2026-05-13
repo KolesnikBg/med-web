@@ -101,10 +101,10 @@ const Dashboard = ({ user }) => {
 
   return (
     <div className="dashboard">
-      <h1>Привет, {user?.name}</h1>
+      {/* <h1>Привет, {user?.name}</h1>
       <p className="dashboard-subtitle">
         Здесь собраны ваши недавние приёмы, анализы и прививки.
-      </p>
+      </p> */}
 
       <div className="App">
       <Calendar />

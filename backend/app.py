@@ -11,7 +11,13 @@ from datetime import datetime, timedelta
 app = Flask(__name__)
 app.config['SECRET_KEY'] = os.getenv('SECRET_KEY', 'super-secret-med-key')
 app.config['JWT_ACCESS_TOKEN_EXPIRES'] = timedelta(hours=24)
-CORS(app, origins=['http://localhost:3000'])
+CORS(
+    app,
+    origins=['http://localhost:3000', 'http://127.0.0.1:3000'],
+    methods=['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],  # ← важно!
+    allow_headers=['Content-Type', 'Authorization'],        # ← важно!
+    supports_credentials=True
+)
 jwt = JWTManager(app)
 
 # пути глобалки (бд)
@@ -351,6 +357,46 @@ def delete_appointment(appointment_id):
 
     return jsonify({'success': True}), 200
 
+# ===== АНАЛИЗЫ: PUT endpoint (если нет — добавьте) =====
+@app.route('/api/analyses/<int:analysis_id>', methods=['PUT'])
+@jwt_required()
+def update_analysis(analysis_id):
+    user_id = int(get_jwt_identity())
+    data = request.get_json() or {}
+    
+    conn = get_db()
+    cursor = conn.cursor()
+    
+    # Проверка принадлежности
+    cursor.execute(
+        "SELECT id FROM analyses WHERE id = ? AND user_id = ?",
+        (analysis_id, user_id)
+    )
+    if not cursor.fetchone():
+        conn.close()
+        return jsonify({'success': False, 'message': 'Анализ не найден'}), 404
+    
+    # Динамическое обновление полей
+    fields = []
+    values = []
+    for key in ['type', 'analysis_date', 'unit', 'value', 'notes']:
+        if key in data:
+            fields.append(f"{key} = ?")
+            values.append(data[key])
+    
+    if fields:
+        values.extend([analysis_id, user_id])
+        cursor.execute(
+            f"UPDATE analyses SET {', '.join(fields)} WHERE id = ? AND user_id = ?",
+            values
+        )
+        conn.commit()
+    
+    cursor.execute("SELECT * FROM analyses WHERE id = ?", (analysis_id,))
+    result = dict(cursor.fetchone())
+    conn.close()
+    
+    return jsonify({'success': True, 'analysis': result})
 
 @app.route('/api/analyses', methods=['POST'])
 @jwt_required()
