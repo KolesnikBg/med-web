@@ -421,7 +421,7 @@
 }
 
 /* Тёмная тема (опционально) */
-@media (prefers-color-scheme: dark) {
+/* @media (prefers-color-scheme: dark) {
   .modal-content { background: #1f2937; color: #f9fafb; }
   .modal-body { color: #d1d5db; }
   .modal-body strong { color: #f9fafb; }
@@ -436,4 +436,4 @@
     background: #374151;
     color: #f9fafb;
   }
-}
+} */
