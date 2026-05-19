@@ -75,20 +75,23 @@ const Register = ({ onRegister }) => {
     // отправка на сервер
     setLoading(true); // включение "загрузки"
     try {
-      const data = await api.register({ // ждм ответа от бэка
+      const data = await api.register({
         name: formData.name,
         lastname: formData.lastname,
         patronymic: formData.patronymic,
         email: formData.email,
         password: formData.password,
         sex: formData.sex,
-        birth_date: formData.birth_date
+        birth_date: formData.birth_date,
       });
 
-      // успех
-      if (data.success) {
-        onRegister(data.user, data.access_token); // передача данных родителю
-        navigate('/'); // переход на главную
+      if (data.success && data.needs_verification) {
+        navigate('/verify-email', {
+          state: {
+            email: formData.email,
+            devCode: data.dev_code,
+          },
+        });
       }
     } catch (err) {
       // обработка 409 Conflict и других ошибок

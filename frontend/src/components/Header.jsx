@@ -28,9 +28,17 @@ const Header = ({ user, onLogout }) => {
           <Link to="/appointments" className="nav-link nav-link--ghost">
             Приёмы
           </Link>
+          <Link to="/vaccinations" className="nav-link nav-link--ghost">
+            Прививки
+          </Link>
           <Link to="/profile" className="nav-link">
             Профиль
           </Link>
+          {user?.is_admin && (
+            <Link to="/admin" className="nav-link nav-link--ghost">
+              Админ
+            </Link>
+          )}
         </nav>
         <div className="user-info">
           <span>{user?.name || user?.lastname}</span>

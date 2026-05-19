@@ -1,5 +1,6 @@
 import React, { useEffect, useState } from 'react';
 import api from '../services/api';
+import Attachments from '../components/Attachments';
 
 // категорий для отображения
 const CATEGORY_LABELS = {
@@ -21,7 +22,10 @@ const Vaccinations = () => {
   const [userVaccinations, setUserVaccinations] = useState([]); // сделанные
   const [listLoading, setListLoading] = useState(true);
   const [editingId, setEditingId] = useState(null);
+  const [activeRecordId, setActiveRecordId] = useState(null);
   const [modalItem, setModalItem] = useState(null);
+  const [filters, setFilters] = useState({ vaccine_id: '', search: '', date_from: '', date_to: '' });
+  const [recommendations, setRecommendations] = useState([]);
 
   const handleChange = (e) => {
     const { name, value } = e.target;
@@ -32,10 +36,19 @@ const Vaccinations = () => {
     setListLoading(true);
     setError('');
     try {
-      const vaccinesRes = await api.request('/vaccines', { method: 'GET' });
-      const userVaccRes = await api.request('/user/vaccinations', { method: 'GET' });
+      const params = {};
+      if (filters.vaccine_id) params.vaccine_id = filters.vaccine_id;
+      if (filters.search) params.search = filters.search;
+      if (filters.date_from) params.date_from = filters.date_from;
+      if (filters.date_to) params.date_to = filters.date_to;
+      const [vaccinesRes, userVaccRes, recRes] = await Promise.all([
+        api.getVaccines(),
+        api.getUserVaccinations(params),
+        api.getVaccinationRecommendations(),
+      ]);
       setVaccines(vaccinesRes.vaccines || []);
       setUserVaccinations(userVaccRes.vaccinations || []);
+      setRecommendations(recRes.recommendations || []);
     } catch (err) {
       setError(err.message || 'Не удалось загрузить прививки');
     } finally {
@@ -45,7 +58,7 @@ const Vaccinations = () => {
 
   useEffect(() => {
     loadVaccines();
-  }, []);
+  }, [filters]);
 
   const handleSubmit = async (e) => {
     e.preventDefault();
@@ -67,25 +80,24 @@ const Vaccinations = () => {
             notes: form.notes,
           };
 
+      const wasEdit = Boolean(editingId);
       let data;
-      if (editingId) {
-        window.alert('Редактирование временно недоступно. Удалите и создайте заново.');
-        return;
+      if (wasEdit) {
+        data = await api.updateUserVaccination(editingId, payload);
+        setActiveRecordId(editingId);
       } else {
-        data = await api.request('/user/vaccinations', {
-          method: 'POST',
-          body: payload,
-        });
+        data = await api.addUserVaccination(payload);
+        const id = data.vaccination?.id;
+        setEditingId(id);
+        setActiveRecordId(id);
       }
 
-      if (data.success || (data.id && data.date_given)) {
-        setForm({
-          vaccine_id: '',
-          custom_name: '',
-          date_given: '',
-          notes: '',
-        });
-        setEditingId(null);
+      if (data.success) {
+        if (wasEdit) {
+          setForm({ vaccine_id: '', custom_name: '', date_given: '', notes: '' });
+          setEditingId(null);
+          setActiveRecordId(null);
+        }
         await loadVaccines();
       }
     } catch (err) {
@@ -118,13 +130,35 @@ const Vaccinations = () => {
   }, {});
 
   return (
-    <div className="dashboard">
-      <h1>Прививки</h1>
-      <p className="dashboard-subtitle">
-        Отмечайте сделанные прививки или добавляйте свои.
-      </p>
+    <div className="page">
+      <header className="page-header">
+        <h1>Прививки</h1>
+        <p className="page-lead">Фильтры, напоминания и фото к каждой записи.</p>
+      </header>
 
-      <div className="form-page" style={{ marginBottom: 24 }}>
+      <div className="filters-bar">
+        <select value={filters.vaccine_id} onChange={(e) => setFilters({ ...filters, vaccine_id: e.target.value })}>
+          <option value="">Все прививки</option>
+          {vaccines.map((v) => <option key={v.id} value={v.id}>{v.name}</option>)}
+        </select>
+        <input placeholder="Поиск" value={filters.search} onChange={(e) => setFilters({ ...filters, search: e.target.value })} />
+        <input type="date" value={filters.date_from} onChange={(e) => setFilters({ ...filters, date_from: e.target.value })} />
+        <input type="date" value={filters.date_to} onChange={(e) => setFilters({ ...filters, date_to: e.target.value })} />
+        <button type="button" className="btn btn-secondary" onClick={() => setFilters({ vaccine_id: '', search: '', date_from: '', date_to: '' })}>Сброс</button>
+      </div>
+
+      {recommendations.length > 0 && (
+        <section className="card card--hint">
+          <h2>Рекомендуется</h2>
+          <ul className="simple-list">
+            {recommendations.map((r, i) => (
+              <li key={i}><strong>{r.vaccine_name}</strong> — {r.reason}</li>
+            ))}
+          </ul>
+        </section>
+      )}
+
+      <div className="card">
         <h2>{editingId ? 'Редактирование прививки' : 'Новая прививка'}</h2>
         <p className="form-page-subtitle">
           Выберите прививку из списка или укажите свою. Обязательно укажите дату.
@@ -212,10 +246,11 @@ const Vaccinations = () => {
               </button>
             )}
           </div>
+          <Attachments recordType="user_vaccinations" recordId={activeRecordId || editingId} />
         </form>
       </div>
 
-      <div className="recent-section">
+      <section className="card">
         <h2>История прививок</h2>
         {listLoading ? (
           <div className="loading">Загрузка истории прививок...</div>
@@ -241,16 +276,25 @@ const Vaccinations = () => {
                     <em>Заметка: {item.notes}</em>
                   </p>
                 )}
-                <div className="form-actions" style={{ marginTop: 10 }}>
-                  {/* редачить нельзя,  только удаление */}
+                <div className="record-card-actions" onClick={(e) => e.stopPropagation()}>
                   <button
                     type="button"
-                    className="btn-link"
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      handleDelete(item.id);
+                    className="btn btn-secondary"
+                    onClick={() => {
+                      setEditingId(item.id);
+                      setActiveRecordId(item.id);
+                      setForm({
+                        vaccine_id: item.vaccine_id ? String(item.vaccine_id) : '',
+                        custom_name: item.custom_name || '',
+                        date_given: item.date_given,
+                        notes: item.notes || '',
+                      });
+                      window.scrollTo({ top: 0, behavior: 'smooth' });
                     }}
                   >
+                    Изменить
+                  </button>
+                  <button type="button" className="btn-link" onClick={() => handleDelete(item.id)}>
                     Удалить
                   </button>
                 </div>
@@ -260,7 +304,7 @@ const Vaccinations = () => {
         ) : (
           <p className="empty-text">Пока нет добавленных прививок.</p>
         )}
-      </div>
+      </section>
 
       {modalItem && (
         <div className="modal-backdrop" onClick={() => setModalItem(null)}>
@@ -290,6 +334,7 @@ const Vaccinations = () => {
                   <strong>Заметка:</strong> {modalItem.notes}
                 </p>
               )}
+              <Attachments recordType="user_vaccinations" recordId={modalItem.id} />
             </div>
           </div>
         </div>

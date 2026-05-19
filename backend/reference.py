@@ -1,0 +1,628 @@
+"""Справочники: врачи, каталог анализов, панели, периодизация прививок."""
+
+from datetime import datetime
+
+from flask import request, jsonify
+from flask_jwt_extended import jwt_required, get_jwt_identity
+
+from db import get_db
+from utils import admin_required
+
+
+def init_reference_tables(cursor):
+    cursor.execute('''
+        CREATE TABLE IF NOT EXISTS doctors (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            name TEXT NOT NULL,
+            specialty TEXT,
+            user_id INTEGER,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            FOREIGN KEY (user_id) REFERENCES users (id) ON DELETE CASCADE
+        )
+    ''')
+
+    cursor.execute('''
+        CREATE TABLE IF NOT EXISTS analysis_catalog (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            name TEXT NOT NULL,
+            default_unit TEXT DEFAULT '',
+            user_id INTEGER,
+            is_active INTEGER DEFAULT 1,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            FOREIGN KEY (user_id) REFERENCES users (id) ON DELETE CASCADE
+        )
+    ''')
+
+    cursor.execute('''
+        CREATE TABLE IF NOT EXISTS analysis_panels (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            name TEXT NOT NULL,
+            description TEXT,
+            user_id INTEGER,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            FOREIGN KEY (user_id) REFERENCES users (id) ON DELETE CASCADE
+        )
+    ''')
+
+    cursor.execute('''
+        CREATE TABLE IF NOT EXISTS analysis_panel_items (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            panel_id INTEGER NOT NULL,
+            catalog_id INTEGER,
+            item_name TEXT NOT NULL,
+            default_unit TEXT DEFAULT '',
+            sort_order INTEGER DEFAULT 0,
+            FOREIGN KEY (panel_id) REFERENCES analysis_panels (id) ON DELETE CASCADE,
+            FOREIGN KEY (catalog_id) REFERENCES analysis_catalog (id) ON DELETE SET NULL
+        )
+    ''')
+
+    cursor.execute('''
+        CREATE TABLE IF NOT EXISTS vaccine_schedules (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            vaccine_id INTEGER NOT NULL,
+            schedule_type TEXT NOT NULL,
+            interval_years INTEGER,
+            age_years INTEGER,
+            description TEXT,
+            FOREIGN KEY (vaccine_id) REFERENCES vaccines (id) ON DELETE CASCADE
+        )
+    ''')
+
+    from db import _add_column_if_missing
+    _add_column_if_missing(cursor, 'appointments', 'doctor_id', 'INTEGER')
+
+    cursor.execute('SELECT COUNT(*) FROM doctors WHERE user_id IS NULL')
+    if cursor.fetchone()[0] == 0:
+        for name in (
+            'Терапевт', 'Стоматолог', 'Травматолог', 'Кардиолог',
+            'Окулист', 'Дерматолог', 'Эндокринолог', 'Невролог',
+        ):
+            cursor.execute(
+                'INSERT INTO doctors (name, user_id) VALUES (?, NULL)',
+                (name,),
+            )
+
+    cursor.execute('SELECT COUNT(*) FROM analysis_catalog WHERE user_id IS NULL')
+    if cursor.fetchone()[0] == 0:
+        items = [
+            ('Гемоглобин', 'г/л'),
+            ('Эритроциты', '×10¹²/л'),
+            ('Лейкоциты', '×10⁹/л'),
+            ('Тромбоциты', '×10⁹/л'),
+            ('Глюкоза', 'ммоль/л'),
+            ('Холестерин', 'ммоль/л'),
+            ('АЛТ', 'Ед/л'),
+            ('АСТ', 'Ед/л'),
+            ('Креатинин', 'мкмоль/л'),
+        ]
+        ids = []
+        for name, unit in items:
+            cursor.execute(
+                'INSERT INTO analysis_catalog (name, default_unit, user_id) VALUES (?, ?, NULL)',
+                (name, unit),
+            )
+            ids.append(cursor.lastrowid)
+
+        cursor.execute(
+            'INSERT INTO analysis_panels (name, description, user_id) VALUES (?, ?, NULL)',
+            ('Общий анализ крови', 'Базовый комплекс показателей крови',),
+        )
+        panel_id = cursor.lastrowid
+        for i, cid in enumerate(ids[:5]):
+            cursor.execute(
+                'SELECT name, default_unit FROM analysis_catalog WHERE id = ?',
+                (cid,),
+            )
+            row = cursor.fetchone()
+            cursor.execute('''
+                INSERT INTO analysis_panel_items (panel_id, catalog_id, item_name, default_unit, sort_order)
+                VALUES (?, ?, ?, ?, ?)
+            ''', (panel_id, cid, row['name'], row['default_unit'], i))
+
+    cursor.execute('SELECT COUNT(*) FROM vaccine_schedules')
+    if cursor.fetchone()[0] == 0:
+        cursor.execute("SELECT id FROM vaccines WHERE name = 'Грипп'")
+        flu = cursor.fetchone()
+        if flu:
+            cursor.execute('''
+                INSERT INTO vaccine_schedules (vaccine_id, schedule_type, interval_years, description)
+                VALUES (?, 'interval', 1, 'Ежегодная ревакцинация')
+            ''', (flu['id'],))
+        cursor.execute("SELECT id FROM vaccines WHERE name = 'Столбняк'")
+        tet = cursor.fetchone()
+        if tet:
+            cursor.execute('''
+                INSERT INTO vaccine_schedules (vaccine_id, schedule_type, interval_years, description)
+                VALUES (?, 'interval', 10, 'Ревакцинация каждые 10 лет')
+            ''', (tet['id'],))
+
+
+def _doctor_visible_clause(user_id):
+    return '(user_id IS NULL OR user_id = ?)'
+
+
+def _catalog_visible_clause(user_id):
+    return '(user_id IS NULL OR user_id = ?) AND is_active = 1'
+
+
+def _panel_visible_clause(user_id):
+    return '(user_id IS NULL OR user_id = ?)'
+
+
+def resolve_doctor(cursor, user_id, doctor_id=None, doctor_name=None):
+    if doctor_id:
+        cursor.execute(
+            f'SELECT id, name FROM doctors WHERE id = ? AND {_doctor_visible_clause(user_id)}',
+            (doctor_id, user_id),
+        )
+        row = cursor.fetchone()
+        if row:
+            return row['id'], row['name']
+    name = (doctor_name or '').strip()
+    if not name:
+        return None, None
+    cursor.execute(
+        f'SELECT id, name FROM doctors WHERE name = ? AND {_doctor_visible_clause(user_id)}',
+        (name, user_id),
+    )
+    row = cursor.fetchone()
+    if row:
+        return row['id'], row['name']
+    cursor.execute(
+        'INSERT INTO doctors (name, user_id) VALUES (?, ?)',
+        (name, user_id),
+    )
+    return cursor.lastrowid, name
+
+
+def _panel_with_items(cursor, panel_id):
+    cursor.execute('SELECT * FROM analysis_panels WHERE id = ?', (panel_id,))
+    panel = cursor.fetchone()
+    if not panel:
+        return None
+    cursor.execute('''
+        SELECT pi.*, c.name as catalog_name, c.default_unit as catalog_unit
+        FROM analysis_panel_items pi
+        LEFT JOIN analysis_catalog c ON pi.catalog_id = c.id
+        WHERE pi.panel_id = ?
+        ORDER BY pi.sort_order, pi.id
+    ''', (panel_id,))
+    items = [dict(r) for r in cursor.fetchall()]
+    d = dict(panel)
+    d['items'] = items
+    return d
+
+
+def register_reference_routes(app):
+    # ─── Doctors ──────────────────────────────────────────────────────────────
+
+    @app.route('/api/doctors', methods=['GET'])
+    @jwt_required()
+    def list_doctors():
+        user_id = int(get_jwt_identity())
+        conn = get_db()
+        cursor = conn.cursor()
+        cursor.execute(f'''
+            SELECT id, name, specialty, user_id,
+                   CASE WHEN user_id IS NULL THEN 1 ELSE 0 END as is_global
+            FROM doctors
+            WHERE {_doctor_visible_clause(user_id)}
+            ORDER BY is_global DESC, name
+        ''', (user_id,))
+        rows = [dict(r) for r in cursor.fetchall()]
+        conn.close()
+        return jsonify({'success': True, 'doctors': rows})
+
+    @app.route('/api/doctors', methods=['POST'])
+    @jwt_required()
+    def create_user_doctor():
+        user_id = int(get_jwt_identity())
+        data = request.get_json() or {}
+        name = (data.get('name') or '').strip()
+        if not name:
+            return jsonify({'success': False, 'message': 'Укажите имя врача'}), 400
+        conn = get_db()
+        cursor = conn.cursor()
+        cursor.execute(
+            f'SELECT id FROM doctors WHERE name = ? AND user_id = ?',
+            (name, user_id),
+        )
+        if cursor.fetchone():
+            conn.close()
+            return jsonify({'success': False, 'message': 'Такой врач уже есть'}), 400
+        cursor.execute(
+            'INSERT INTO doctors (name, specialty, user_id) VALUES (?, ?, ?)',
+            (name, data.get('specialty', ''), user_id),
+        )
+        conn.commit()
+        did = cursor.lastrowid
+        cursor.execute('SELECT * FROM doctors WHERE id = ?', (did,))
+        row = dict(cursor.fetchone())
+        conn.close()
+        return jsonify({'success': True, 'doctor': row}), 201
+
+    @app.route('/api/admin/doctors', methods=['GET'])
+    @admin_required
+    def admin_list_doctors():
+        conn = get_db()
+        cursor = conn.cursor()
+        cursor.execute('SELECT * FROM doctors WHERE user_id IS NULL ORDER BY name')
+        rows = [dict(r) for r in cursor.fetchall()]
+        conn.close()
+        return jsonify({'success': True, 'doctors': rows})
+
+    @app.route('/api/admin/doctors', methods=['POST'])
+    @admin_required
+    def admin_create_doctor():
+        data = request.get_json() or {}
+        name = (data.get('name') or '').strip()
+        if not name:
+            return jsonify({'success': False, 'message': 'Имя обязательно'}), 400
+        conn = get_db()
+        cursor = conn.cursor()
+        try:
+            cursor.execute(
+                'INSERT INTO doctors (name, specialty, user_id) VALUES (?, ?, NULL)',
+                (name, data.get('specialty', '')),
+            )
+            conn.commit()
+            did = cursor.lastrowid
+            cursor.execute('SELECT * FROM doctors WHERE id = ?', (did,))
+            row = dict(cursor.fetchone())
+        except Exception:
+            conn.close()
+            return jsonify({'success': False, 'message': 'Врач уже существует'}), 400
+        conn.close()
+        return jsonify({'success': True, 'doctor': row}), 201
+
+    @app.route('/api/admin/doctors/<int:doctor_id>', methods=['DELETE'])
+    @admin_required
+    def admin_delete_doctor(doctor_id):
+        conn = get_db()
+        cursor = conn.cursor()
+        cursor.execute('DELETE FROM doctors WHERE id = ? AND user_id IS NULL', (doctor_id,))
+        deleted = cursor.rowcount
+        conn.commit()
+        conn.close()
+        if not deleted:
+            return jsonify({'success': False, 'message': 'Не найден'}), 404
+        return jsonify({'success': True})
+
+    # ─── Analysis catalog ─────────────────────────────────────────────────────
+
+    @app.route('/api/analysis-catalog', methods=['GET'])
+    @jwt_required()
+    def list_catalog():
+        user_id = int(get_jwt_identity())
+        conn = get_db()
+        cursor = conn.cursor()
+        cursor.execute(f'''
+            SELECT id, name, default_unit, user_id,
+                   CASE WHEN user_id IS NULL THEN 1 ELSE 0 END as is_global
+            FROM analysis_catalog
+            WHERE {_catalog_visible_clause(user_id)}
+            ORDER BY is_global DESC, name
+        ''', (user_id,))
+        rows = [dict(r) for r in cursor.fetchall()]
+        conn.close()
+        return jsonify({'success': True, 'catalog': rows})
+
+    @app.route('/api/analysis-catalog', methods=['POST'])
+    @jwt_required()
+    def create_catalog_item():
+        user_id = int(get_jwt_identity())
+        data = request.get_json() or {}
+        name = (data.get('name') or '').strip()
+        if not name:
+            return jsonify({'success': False, 'message': 'Название обязательно'}), 400
+        conn = get_db()
+        cursor = conn.cursor()
+        cursor.execute(
+            'INSERT INTO analysis_catalog (name, default_unit, user_id) VALUES (?, ?, ?)',
+            (name, data.get('default_unit', ''), user_id),
+        )
+        conn.commit()
+        cid = cursor.lastrowid
+        cursor.execute('SELECT * FROM analysis_catalog WHERE id = ?', (cid,))
+        row = dict(cursor.fetchone())
+        conn.close()
+        return jsonify({'success': True, 'item': row}), 201
+
+    @app.route('/api/admin/analysis-catalog', methods=['POST'])
+    @admin_required
+    def admin_create_catalog():
+        data = request.get_json() or {}
+        name = (data.get('name') or '').strip()
+        if not name:
+            return jsonify({'success': False, 'message': 'Название обязательно'}), 400
+        conn = get_db()
+        cursor = conn.cursor()
+        cursor.execute(
+            'INSERT INTO analysis_catalog (name, default_unit, user_id) VALUES (?, ?, NULL)',
+            (name, data.get('default_unit', '')),
+        )
+        conn.commit()
+        cid = cursor.lastrowid
+        cursor.execute('SELECT * FROM analysis_catalog WHERE id = ?', (cid,))
+        row = dict(cursor.fetchone())
+        conn.close()
+        return jsonify({'success': True, 'item': row}), 201
+
+    @app.route('/api/admin/analysis-catalog/<int:item_id>', methods=['DELETE'])
+    @admin_required
+    def admin_delete_catalog(item_id):
+        conn = get_db()
+        cursor = conn.cursor()
+        cursor.execute(
+            'UPDATE analysis_catalog SET is_active = 0 WHERE id = ? AND user_id IS NULL',
+            (item_id,),
+        )
+        conn.commit()
+        conn.close()
+        return jsonify({'success': True})
+
+    # ─── Analysis panels ──────────────────────────────────────────────────────
+
+    @app.route('/api/analysis-panels', methods=['GET'])
+    @jwt_required()
+    def list_panels():
+        user_id = int(get_jwt_identity())
+        conn = get_db()
+        cursor = conn.cursor()
+        cursor.execute(f'''
+            SELECT id, name, description, user_id,
+                   CASE WHEN user_id IS NULL THEN 1 ELSE 0 END as is_global
+            FROM analysis_panels
+            WHERE {_panel_visible_clause(user_id)}
+            ORDER BY is_global DESC, name
+        ''', (user_id,))
+        rows = [dict(r) for r in cursor.fetchall()]
+        conn.close()
+        return jsonify({'success': True, 'panels': rows})
+
+    @app.route('/api/analysis-panels/<int:panel_id>', methods=['GET'])
+    @jwt_required()
+    def get_panel(panel_id):
+        user_id = int(get_jwt_identity())
+        conn = get_db()
+        cursor = conn.cursor()
+        cursor.execute(f'''
+            SELECT id FROM analysis_panels WHERE id = ? AND {_panel_visible_clause(user_id)}
+        ''', (panel_id, user_id))
+        if not cursor.fetchone():
+            conn.close()
+            return jsonify({'success': False, 'message': 'Панель не найдена'}), 404
+        panel = _panel_with_items(cursor, panel_id)
+        conn.close()
+        return jsonify({'success': True, 'panel': panel})
+
+    @app.route('/api/analysis-panels', methods=['POST'])
+    @jwt_required()
+    def create_panel():
+        user_id = int(get_jwt_identity())
+        data = request.get_json() or {}
+        name = (data.get('name') or '').strip()
+        items = data.get('items') or []
+        if not name:
+            return jsonify({'success': False, 'message': 'Название панели обязательно'}), 400
+        conn = get_db()
+        cursor = conn.cursor()
+        cursor.execute(
+            'INSERT INTO analysis_panels (name, description, user_id) VALUES (?, ?, ?)',
+            (name, data.get('description', ''), user_id),
+        )
+        panel_id = cursor.lastrowid
+        for i, it in enumerate(items):
+            cursor.execute('''
+                INSERT INTO analysis_panel_items (panel_id, catalog_id, item_name, default_unit, sort_order)
+                VALUES (?, ?, ?, ?, ?)
+            ''', (
+                panel_id,
+                it.get('catalog_id'),
+                it.get('item_name', '').strip() or 'Показатель',
+                it.get('default_unit', ''),
+                i,
+            ))
+        conn.commit()
+        panel = _panel_with_items(cursor, panel_id)
+        conn.close()
+        return jsonify({'success': True, 'panel': panel}), 201
+
+    @app.route('/api/admin/analysis-panels', methods=['POST'])
+    @admin_required
+    def admin_create_panel():
+        data = request.get_json() or {}
+        name = (data.get('name') or '').strip()
+        items = data.get('items') or []
+        if not name:
+            return jsonify({'success': False, 'message': 'Название обязательно'}), 400
+        conn = get_db()
+        cursor = conn.cursor()
+        cursor.execute(
+            'INSERT INTO analysis_panels (name, description, user_id) VALUES (?, ?, NULL)',
+            (name, data.get('description', '')),
+        )
+        panel_id = cursor.lastrowid
+        for i, it in enumerate(items):
+            iname = it.get('item_name', '').strip()
+            if not iname and it.get('catalog_id'):
+                cursor.execute('SELECT name, default_unit FROM analysis_catalog WHERE id = ?', (it['catalog_id'],))
+                c = cursor.fetchone()
+                iname, unit = c['name'], c['default_unit'] if c else ('', '')
+            else:
+                unit = it.get('default_unit', '')
+            cursor.execute('''
+                INSERT INTO analysis_panel_items (panel_id, catalog_id, item_name, default_unit, sort_order)
+                VALUES (?, ?, ?, ?, ?)
+            ''', (panel_id, it.get('catalog_id'), iname, unit, i))
+        conn.commit()
+        panel = _panel_with_items(cursor, panel_id)
+        conn.close()
+        return jsonify({'success': True, 'panel': panel}), 201
+
+    @app.route('/api/analyses/batch', methods=['POST'])
+    @jwt_required()
+    def create_analyses_batch():
+        user_id = int(get_jwt_identity())
+        data = request.get_json() or {}
+        analysis_date = data.get('analysis_date')
+        rows = data.get('results') or []
+        if not analysis_date or not rows:
+            return jsonify({'success': False, 'message': 'Дата и результаты обязательны'}), 400
+        conn = get_db()
+        cursor = conn.cursor()
+        created = []
+        for r in rows:
+            if not r.get('type') or r.get('value') in (None, ''):
+                continue
+            cursor.execute('''
+                INSERT INTO analyses (user_id, type, analysis_date, unit, value, notes)
+                VALUES (?, ?, ?, ?, ?, ?)
+            ''', (
+                user_id,
+                r['type'].strip(),
+                analysis_date,
+                (r.get('unit') or '').strip(),
+                str(r['value']).strip(),
+                r.get('notes', ''),
+            ))
+            aid = cursor.lastrowid
+            cursor.execute('SELECT * FROM analyses WHERE id = ?', (aid,))
+            created.append(dict(cursor.fetchone()))
+        conn.commit()
+        conn.close()
+        return jsonify({'success': True, 'analyses': created, 'count': len(created)}), 201
+
+    # ─── Vaccine schedules ────────────────────────────────────────────────────
+
+    @app.route('/api/vaccine-schedules', methods=['GET'])
+    @jwt_required()
+    def list_vaccine_schedules():
+        vaccine_id = request.args.get('vaccine_id', type=int)
+        conn = get_db()
+        cursor = conn.cursor()
+        if vaccine_id:
+            cursor.execute(
+                'SELECT * FROM vaccine_schedules WHERE vaccine_id = ? ORDER BY schedule_type, age_years',
+                (vaccine_id,),
+            )
+        else:
+            cursor.execute('''
+                SELECT vs.*, v.name as vaccine_name
+                FROM vaccine_schedules vs
+                JOIN vaccines v ON v.id = vs.vaccine_id
+                ORDER BY v.name
+            ''')
+        rows = [dict(r) for r in cursor.fetchall()]
+        conn.close()
+        return jsonify({'success': True, 'schedules': rows})
+
+    @app.route('/api/admin/vaccine-schedules', methods=['POST'])
+    @admin_required
+    def admin_create_schedule():
+        data = request.get_json() or {}
+        vaccine_id = data.get('vaccine_id')
+        schedule_type = data.get('schedule_type')
+        if not vaccine_id or schedule_type not in ('interval', 'age'):
+            return jsonify({'success': False, 'message': 'Некорректные данные'}), 400
+        conn = get_db()
+        cursor = conn.cursor()
+        cursor.execute('''
+            INSERT INTO vaccine_schedules (vaccine_id, schedule_type, interval_years, age_years, description)
+            VALUES (?, ?, ?, ?, ?)
+        ''', (
+            vaccine_id,
+            schedule_type,
+            data.get('interval_years'),
+            data.get('age_years'),
+            data.get('description', ''),
+        ))
+        conn.commit()
+        sid = cursor.lastrowid
+        cursor.execute('SELECT * FROM vaccine_schedules WHERE id = ?', (sid,))
+        row = dict(cursor.fetchone())
+        conn.close()
+        return jsonify({'success': True, 'schedule': row}), 201
+
+    @app.route('/api/admin/vaccine-schedules/<int:schedule_id>', methods=['DELETE'])
+    @admin_required
+    def admin_delete_schedule(schedule_id):
+        conn = get_db()
+        cursor = conn.cursor()
+        cursor.execute('DELETE FROM vaccine_schedules WHERE id = ?', (schedule_id,))
+        conn.commit()
+        conn.close()
+        return jsonify({'success': True})
+
+    @app.route('/api/user/vaccination-recommendations', methods=['GET'])
+    @jwt_required()
+    def vaccination_recommendations():
+        user_id = int(get_jwt_identity())
+        conn = get_db()
+        cursor = conn.cursor()
+        cursor.execute('SELECT birth_date FROM users WHERE id = ?', (user_id,))
+        user = cursor.fetchone()
+        birth = user['birth_date'] if user else None
+        age = None
+        if birth:
+            today = datetime.utcnow().date()
+            bd = datetime.strptime(birth[:10], '%Y-%m-%d').date()
+            age = today.year - bd.year - ((today.month, today.day) < (bd.month, bd.day))
+
+        cursor.execute('''
+            SELECT uv.vaccine_id, uv.date_given, v.name as vaccine_name, uv.custom_name
+            FROM user_vaccinations uv
+            LEFT JOIN vaccines v ON v.id = uv.vaccine_id
+            WHERE uv.user_id = ?
+        ''', (user_id,))
+        history = cursor.fetchall()
+        last_by_vaccine = {}
+        for h in history:
+            vid = h['vaccine_id']
+            if vid and (vid not in last_by_vaccine or h['date_given'] > last_by_vaccine[vid]['date']):
+                last_by_vaccine[vid] = {'date': h['date_given'], 'name': h['vaccine_name']}
+
+        cursor.execute('''
+            SELECT vs.*, v.name as vaccine_name
+            FROM vaccine_schedules vs
+            JOIN vaccines v ON v.id = vs.vaccine_id
+            WHERE v.is_active = 1
+        ''')
+        schedules = cursor.fetchall()
+        recommendations = []
+
+        for sch in schedules:
+            vid = sch['vaccine_id']
+            vname = sch['vaccine_name']
+            if sch['schedule_type'] == 'interval' and sch['interval_years']:
+                last = last_by_vaccine.get(vid)
+                if last:
+                    from datetime import datetime as dt
+                    last_d = dt.strptime(last['date'][:10], '%Y-%m-%d').date()
+                    years = (datetime.utcnow().date() - last_d).days / 365.25
+                    if years >= sch['interval_years']:
+                        recommendations.append({
+                            'vaccine_id': vid,
+                            'vaccine_name': vname,
+                            'reason': f'Прошло {years:.1f} лет с последней прививки',
+                            'schedule_type': 'interval',
+                        })
+                else:
+                    recommendations.append({
+                        'vaccine_id': vid,
+                        'vaccine_name': vname,
+                        'reason': 'Ещё не отмечена в истории',
+                        'schedule_type': 'interval',
+                    })
+            elif sch['schedule_type'] == 'age' and sch['age_years'] is not None and age is not None:
+                if age >= sch['age_years'] and vid not in last_by_vaccine:
+                    recommendations.append({
+                        'vaccine_id': vid,
+                        'vaccine_name': vname,
+                        'reason': f'Рекомендуется с {sch["age_years"]} лет (вам {age})',
+                        'schedule_type': 'age',
+                    })
+
+        conn.close()
+        return jsonify({'success': True, 'recommendations': recommendations, 'age': age})

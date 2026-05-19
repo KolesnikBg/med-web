@@ -1,6 +1,7 @@
 backend/venv
 
 backend/data
+backend/uploads
 
 backend/__pycache__/
 
