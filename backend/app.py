@@ -14,7 +14,7 @@ from flask_jwt_extended import (
 )
 
 from config import JWT_ACCESS_TOKEN_EXPIRES_HOURS, UPLOAD_DIR
-from db import get_db, init_db, user_to_dict
+from db import get_db, init_db, user_to_dict, build_full_name
 from services.email_service import send_verification_code, send_password_reset
 from reference import register_reference_routes, resolve_doctor
 from utils import (
@@ -70,12 +70,13 @@ def register():
     if not all(k in data and data[k] for k in required):
         return jsonify({'success': False, 'message': 'Заполните обязательные поля'}), 400
 
-    name = data.get('name', '').strip()
+    first_name = data.get('name', '').strip()
     lastname = data.get('lastname', '').strip()
     patronymic = data.get('patronymic', '').strip()
-    full_name = ' '.join(p for p in [lastname, name, patronymic] if p).strip()
+    full_name = build_full_name(lastname, first_name, patronymic)
     if not full_name:
         full_name = data.get('email', '').split('@')[0]
+        first_name = first_name or full_name
 
     email = data['email'].strip().lower()
     if '@' not in email:
@@ -88,17 +89,17 @@ def register():
     cursor.execute('SELECT id FROM users WHERE email = ?', (email,))
     if cursor.fetchone():
         conn.close()
-        return jsonify({'success': False, 'message': 'Email уже используется'}), 400
+        return jsonify({'success': False, 'message': 'Email уже используется'}), 409
 
     code = generate_code()
     pwd_hash = bcrypt.hashpw(data['password'].encode(), bcrypt.gensalt()).decode()
     cursor.execute('''
-        INSERT INTO users (name, email, password_hash, sex, birth_date,
-                           verification_code, verification_expires, email_verified)
-        VALUES (?, ?, ?, ?, ?, ?, ?, 0)
+        INSERT INTO users (name, lastname, first_name, patronymic, email, password_hash,
+                           sex, birth_date, verification_code, verification_expires, email_verified)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0)
     ''', (
-        full_name, email, pwd_hash, data['sex'], data['birth_date'],
-        code, code_expires(30),
+        full_name, lastname, first_name, patronymic, email, pwd_hash,
+        data['sex'], data['birth_date'], code, code_expires(30),
     ))
     user_id = cursor.lastrowid
     conn.commit()
@@ -324,8 +325,8 @@ def profile():
     conn = get_db()
     cursor = conn.cursor()
     cursor.execute(
-        'SELECT id, name, email, sex, birth_date, role, email_verified, '
-        'two_factor_enabled, created_at FROM users WHERE id = ?',
+        'SELECT id, name, lastname, first_name, patronymic, email, sex, birth_date, role, '
+        'email_verified, two_factor_enabled, created_at FROM users WHERE id = ?',
         (user_id,),
     )
     user = cursor.fetchone()

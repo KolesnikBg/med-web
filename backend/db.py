@@ -45,6 +45,16 @@ def init_db():
     _add_column_if_missing(cursor, 'users', 'reset_expires', 'TEXT')
     _add_column_if_missing(cursor, 'users', 'totp_secret', 'TEXT')
     _add_column_if_missing(cursor, 'users', 'two_factor_enabled', 'INTEGER DEFAULT 0')
+    _add_column_if_missing(cursor, 'users', 'lastname', 'TEXT')
+    _add_column_if_missing(cursor, 'users', 'first_name', 'TEXT')
+    _add_column_if_missing(cursor, 'users', 'patronymic', 'TEXT')
+
+    cursor.execute('''
+        UPDATE users SET first_name = name
+        WHERE (first_name IS NULL OR first_name = '')
+          AND name IS NOT NULL AND name != ''
+          AND (lastname IS NULL OR lastname = '')
+    ''')
 
     cursor.execute('''
         CREATE TABLE IF NOT EXISTS appointments (
@@ -141,20 +151,39 @@ def init_db():
                 (name, desc, cat),
             )
 
-    _seed_user(cursor, 'demo@example.com', 'demo123', 'Демо Пользователь', verified=True)
-    _seed_user(cursor, 'admin@med.local', 'admin123', 'Администратор', verified=True, role='admin')
+    _seed_user(
+        cursor, 'demo@example.com', 'demo123', 'Пользователь Демо',
+        verified=True, lastname='Пользователь', first_name='Демо',
+    )
+    _seed_user(
+        cursor, 'admin@med.local', 'admin123', 'Администратор Системы',
+        verified=True, role='admin', lastname='Администратор', first_name='Системы',
+    )
 
     cursor.execute('''
         UPDATE users SET email_verified = 1
         WHERE email IN ('demo@example.com', 'admin@med.local')
     ''')
     cursor.execute("UPDATE users SET role = 'admin' WHERE email = 'admin@med.local'")
+    cursor.execute('''
+        UPDATE users SET lastname = 'Пользователь', first_name = 'Демо', name = 'Пользователь Демо'
+        WHERE email = 'demo@example.com' AND (lastname IS NULL OR lastname = '')
+    ''')
+    cursor.execute('''
+        UPDATE users SET lastname = 'Администратор', first_name = 'Системы', name = 'Администратор Системы'
+        WHERE email = 'admin@med.local' AND (lastname IS NULL OR lastname = '')
+    ''')
 
     conn.commit()
     conn.close()
 
 
-def _seed_user(cursor, email, password, name, verified=False, role='user'):
+def build_full_name(lastname='', first_name='', patronymic='', fallback=''):
+    return ' '.join(p for p in (lastname, first_name, patronymic) if p) or fallback
+
+
+def _seed_user(cursor, email, password, display_name, verified=False, role='user',
+               lastname='', first_name='', patronymic=''):
     cursor.execute('SELECT id FROM users WHERE email = ?', (email,))
     if cursor.fetchone():
         cursor.execute(
@@ -165,11 +194,22 @@ def _seed_user(cursor, email, password, name, verified=False, role='user'):
             cursor.execute("UPDATE users SET role = 'admin' WHERE email = ?", (email,))
         return
 
+    if not first_name and display_name:
+        parts = display_name.split()
+        if len(parts) >= 2:
+            lastname, first_name = parts[0], parts[1]
+            patronymic = ' '.join(parts[2:]) if len(parts) > 2 else ''
+        else:
+            first_name = display_name
+
+    full_name = build_full_name(lastname, first_name, patronymic, display_name)
     pwd = bcrypt.hashpw(password.encode(), bcrypt.gensalt()).decode()
     cursor.execute('''
-        INSERT INTO users (name, email, password_hash, sex, birth_date, role, email_verified)
-        VALUES (?, ?, ?, ?, ?, ?, ?)
-    ''', (name, email, pwd, 'male', '1990-01-01', role, 1 if verified else 0))
+        INSERT INTO users (name, lastname, first_name, patronymic, email, password_hash,
+                         sex, birth_date, role, email_verified)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    ''', (full_name, lastname, first_name, patronymic, email, pwd,
+          'male', '1990-01-01', role, 1 if verified else 0))
     user_id = cursor.lastrowid
 
     if email == 'demo@example.com':
@@ -201,6 +241,11 @@ def user_to_dict(row):
     d['is_admin'] = d.get('role') == 'admin'
     d['two_factor_enabled'] = bool(d.get('two_factor_enabled'))
     d['email_verified'] = bool(d.get('email_verified'))
+    ln = (d.get('lastname') or '').strip()
+    fn = (d.get('first_name') or '').strip()
+    pat = (d.get('patronymic') or '').strip()
+    d['full_name'] = build_full_name(ln, fn, pat, d.get('name') or '')
+    d['name'] = d['full_name']
     for key in ('password_hash', 'verification_code', 'verification_expires',
                 'reset_code', 'reset_expires', 'totp_secret'):
         d.pop(key, None)

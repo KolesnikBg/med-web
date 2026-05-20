@@ -41,7 +41,7 @@ const Header = ({ user, onLogout }) => {
           )}
         </nav>
         <div className="user-info">
-          <span>{user?.name || user?.lastname}</span>
+          <span>{user?.full_name || user?.name || user?.lastname}</span>
           <button onClick={handleLogout} className="logout-btn" type="button">
             Выйти
         </button>

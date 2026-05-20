@@ -79,7 +79,10 @@ const Profile = ({ user, onUserUpdate }) => {
     <div className="profile-page">
       <h2>Мой профиль</h2>
       <div className="profile-card">
-        <p><strong>ФИО:</strong> {profile.name}</p>
+        <p><strong>Фамилия:</strong> {profile.lastname || '—'}</p>
+        <p><strong>Имя:</strong> {profile.first_name || '—'}</p>
+        {profile.patronymic && <p><strong>Отчество:</strong> {profile.patronymic}</p>}
+        <p><strong>ФИО:</strong> {profile.full_name || profile.name}</p>
         <p><strong>Email:</strong> {profile.email}</p>
         <p><strong>Пол:</strong> {sexLabel}</p>
         <p><strong>Дата рождения:</strong> {new Date(profile.birth_date).toLocaleDateString('ru-RU')}</p>

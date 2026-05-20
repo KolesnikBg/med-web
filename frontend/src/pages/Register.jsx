@@ -1,15 +1,20 @@
-import React, { useState } from 'react';  // подключение реакт
-import { Link, useNavigate } from 'react-router-dom';  // навигация между страницами
-import api from '../services/api';  // апи для работы с бэкендом
-import '../styles/register.css';  // стили
-import { useValidation } from '../hooks/useValidation.js'; // хук 
+﻿import React, { useMemo, useState } from 'react';
+import { Link, useNavigate } from 'react-router-dom';
+import api from '../services/api';
+import '../styles/register.css';
+import { computeRegistrationErrors, useValidation } from '../hooks/useValidation.js';
 
-/*
-* ЛОГИКА
-*/
-const Register = ({ onRegister }) => {
+const FIELD_NAMES = [
+  'lastname',
+  'name',
+  'patronymic',
+  'email',
+  'birth_date',
+  'password',
+  'confirmPassword',
+];
 
-  // данные формы
+const Register = () => {
   const [formData, setFormData] = useState({
     name: '',
     lastname: '',
@@ -18,62 +23,77 @@ const Register = ({ onRegister }) => {
     password: '',
     confirmPassword: '',
     sex: 'male',
-    birth_date: ''
+    birth_date: '',
   });
 
-  // общая ошибка (над формой)
-  const [error, setError] = useState('');  // текст ошибки для пользователя 
-
-  // ошибки по полям
-  const [fieldErrors, setFieldErrors] = useState({});
-
-  // флаг загрузки (блокировка кнопки)
+  const [error, setError] = useState('');
+  const [serverFieldErrors, setServerFieldErrors] = useState({});
+  const [touched, setTouched] = useState({});
+  const [submitAttempted, setSubmitAttempted] = useState(false);
   const [loading, setLoading] = useState(false);
+  const [isChecked, setIsChecked] = useState(false);
+  const [consentTouched, setConsentTouched] = useState(false);
 
-  // навигация (для перехода на другую страницу)
   const navigate = useNavigate();
-
-  // подключение валидации из хука
   const { validate } = useValidation(formData);
 
-  // обработка ввода
+  const clientErrors = useMemo(() => computeRegistrationErrors(formData), [formData]);
+  const formValid = useMemo(() => Object.keys(clientErrors).length === 0, [clientErrors]);
+
+  const mergedErrors = { ...clientErrors, ...serverFieldErrors };
+  const canSubmit = formValid && isChecked && !loading;
+
+  const markTouched = (name) => {
+    setTouched((prev) => ({ ...prev, [name]: true }));
+  };
+
+  const showFieldFeedback = (name) =>
+    Boolean(touched[name] || serverFieldErrors[name]);
+
+  const getFieldClass = (name) => {
+    if (!showFieldFeedback(name)) return '';
+    if (mergedErrors[name]) return 'field-input-invalid';
+    if (name === 'patronymic' && !formData.patronymic?.trim()) return 'field-input-valid';
+    if (!formData[name] && name !== 'patronymic') return 'field-input-invalid';
+    return 'field-input-valid';
+  };
+
   const handleChange = (e) => {
-
-    // берем имя и его значение
     const { name, value } = e.target;
-
-    // обновляем только это поле
-    setFormData({ ...formData, [name]: value });
-
-    // очистка ошибку поля при вводе
-    if (fieldErrors[name]) {
-      setFieldErrors({ ...fieldErrors, [name]: '' });
+    setFormData((prev) => ({ ...prev, [name]: value }));
+    markTouched(name);
+    if (serverFieldErrors[name]) {
+      setServerFieldErrors((prev) => {
+        const next = { ...prev };
+        delete next[name];
+        return next;
+      });
     }
-  };
-
-  // чекбокс
-  const [isChecked, setIsChecked] = useState(false);
-
-  // проверка чекбокса
-  const handleCheckboxChange = (event) => {
-    setIsChecked(event.target.checked);
-  };
-
-  // отправка формы
-  const handleSubmit = async (e) => {
-    e.preventDefault(); // запрет перезагрузки страницы
     setError('');
-    setFieldErrors({});
+  };
 
-    // валидация через хук
+  const handleBlur = (e) => {
+    markTouched(e.target.name);
+  };
+
+  const handleSubmit = async (e) => {
+    e.preventDefault();
+    setSubmitAttempted(true);
+    setConsentTouched(true);
+    setError('');
+    setServerFieldErrors({});
+
     const { isValid, errors } = validate();
     if (!isValid) {
-      setFieldErrors(errors); // показываем ошибки под полями
+      setTouched((prev) => ({
+        ...prev,
+        ...Object.fromEntries(Object.keys(errors).map((k) => [k, true])),
+      }));
       return;
     }
+    if (!isChecked) return;
 
-    // отправка на сервер
-    setLoading(true); // включение "загрузки"
+    setLoading(true);
     try {
       const data = await api.register({
         name: formData.name,
@@ -87,43 +107,51 @@ const Register = ({ onRegister }) => {
 
       if (data.success && data.needs_verification) {
         navigate('/verify-email', {
-          state: {
-            email: formData.email,
-            devCode: data.dev_code,
-          },
+          state: { email: formData.email, devCode: data.dev_code },
         });
       }
     } catch (err) {
-      // обработка 409 Conflict и других ошибок
-      if (err.status === 409 || err.message?.includes('409')) {
+      const apiMessage = err.payload?.message || err.message || '';
+      const emailTaken =
+        err.status === 409 ||
+        /email.*уже|уже.*используется|email.*занят/i.test(apiMessage);
+
+      if (emailTaken) {
         setError('Этот email уже зарегистрирован');
-        setFieldErrors({ email: 'Email занят' }); // подсветка поля
+        setServerFieldErrors({ email: 'Этот email уже занят' });
+        markTouched('email');
       } else if (err.status === 400) {
-        setError('Проверьте правильность заполнения формы');
+        setError(apiMessage || 'Проверьте правильность заполнения формы');
       } else {
-        setError(err.message || 'Ошибка регистрации. Попробуйте позже');
+        setError(apiMessage || 'Ошибка регистрации. Попробуйте позже');
       }
     } finally {
-      setLoading(false); // отключаем загрузку 
+      setLoading(false);
     }
   };
 
-  /*
-  * ОТРИСОВКА 
-  */
+  const renderFieldError = (name) => {
+    if (!showFieldFeedback(name)) {
+      return <span className="field-error field-error--placeholder" aria-hidden="true" />;
+    }
+    const msg = mergedErrors[name];
+    return msg ? (
+      <span className="field-error">{msg}</span>
+    ) : (
+      <span className="field-error field-error--placeholder" aria-hidden="true" />
+    );
+  };
 
   return (
     <div className="auth-container">
-      <div className="auth-card">
+      <div className="auth-card auth-card--register">
         <h2>Регистрация</h2>
+        {/* <p className="auth-subtitle">Корректные поля подсвечиваются зелёным, с ошибками — красным.</p> */}
 
-        {/* Общая ошибка */}
         {error && <div className="error-message">{error}</div>}
 
-        <form onSubmit={handleSubmit} noValidate> {/* отключение валидацию браузера */}
-
-          {/* ФИО */}
-          <div className='block'>
+        <form onSubmit={handleSubmit} noValidate className="register-form">
+          <div className="block">
             <h3>ФИО</h3>
             <div className="form-row">
               <div className="form-group">
@@ -131,39 +159,40 @@ const Register = ({ onRegister }) => {
                   name="lastname"
                   value={formData.lastname}
                   onChange={handleChange}
+                  onBlur={handleBlur}
                   placeholder="Фамилия*"
-                  required
-                  minLength={2}
+                  className={getFieldClass('lastname')}
+                  autoComplete="family-name"
                 />
-                {fieldErrors.lastname && <span className="field-error">{fieldErrors.lastname}</span>}
+                {renderFieldError('lastname')}
               </div>
               <div className="form-group">
                 <input
                   name="name"
                   value={formData.name}
                   onChange={handleChange}
+                  onBlur={handleBlur}
                   placeholder="Имя*"
-                  required
-                  minLength={2}
-                  pattern="[А-Яа-яA-Za-z\s\-]+" // только буквы, пробелы, дефис
-                  title="Только буквы, пробелы и дефис"
+                  className={getFieldClass('name')}
+                  autoComplete="given-name"
                 />
-                {fieldErrors.name && <span className="field-error">{fieldErrors.name}</span>}
+                {renderFieldError('name')}
               </div>
               <div className="form-group">
                 <input
                   name="patronymic"
                   value={formData.patronymic}
                   onChange={handleChange}
+                  onBlur={handleBlur}
                   placeholder="Отчество"
-                  pattern="[А-Яа-яA-Za-z\s\-]+"
+                  className={getFieldClass('patronymic')}
+                  autoComplete="additional-name"
                 />
-                {fieldErrors.patronymic && <span className="field-error">{fieldErrors.patronymic}</span>}
+                {renderFieldError('patronymic')}
               </div>
             </div>
           </div>
 
-          {/* Email */}
           <div className="block">
             <div className="form-group">
               <h3>Эл. почта</h3>
@@ -172,22 +201,25 @@ const Register = ({ onRegister }) => {
                 name="email"
                 value={formData.email}
                 onChange={handleChange}
-                required
+                onBlur={handleBlur}
                 placeholder="example@mail.ru"
-                pattern="[a-z0-9._%+-]+@[a-z0-9.-]+\.[a-z]{2,}$" // ← HTML5-паттерн
-                title="Введите корректный email"
+                className={getFieldClass('email')}
                 autoComplete="email"
               />
-              {fieldErrors.email && <span className="field-error">{fieldErrors.email}</span>}
+              {renderFieldError('email')}
             </div>
           </div>
 
-          {/* Пол + Дата */}
           <div className="block">
             <div className="form-row-2">
               <div className="form-group">
                 <h3>Пол</h3>
-                <select name="sex" value={formData.sex} onChange={handleChange} required>
+                <select
+                  name="sex"
+                  value={formData.sex}
+                  onChange={handleChange}
+                  className="field-input-valid"
+                >
                   <option value="male">Мужской</option>
                   <option value="female">Женский</option>
                 </select>
@@ -199,16 +231,16 @@ const Register = ({ onRegister }) => {
                   name="birth_date"
                   value={formData.birth_date}
                   onChange={handleChange}
-                  required
-                  max={new Date().toISOString().split('T')[0]} // нельзя выбрать будущее
+                  onBlur={handleBlur}
+                  max={new Date().toISOString().split('T')[0]}
+                  className={getFieldClass('birth_date')}
                 />
-                {fieldErrors.birth_date && <span className="field-error">{fieldErrors.birth_date}</span>}
+                {renderFieldError('birth_date')}
               </div>
             </div>
           </div>
 
-          {/* Пароль */}
-          <div className='block'>
+          <div className="block">
             <div className="form-group">
               <h3>Пароль</h3>
               <input
@@ -216,18 +248,16 @@ const Register = ({ onRegister }) => {
                 name="password"
                 value={formData.password}
                 onChange={handleChange}
-                required
-                minLength={6} //  HTML5-валидация
-                pattern="(?=.*[a-zA-Z])(?=.*\d).+" // ← минимум буква + цифра (опционально)
-                title="Минимум 6 символов, включая буквы и цифры"
+                onBlur={handleBlur}
+                className={getFieldClass('password')}
                 autoComplete="new-password"
+                placeholder="Минимум 6 символов, буквы и цифры"
               />
-              {fieldErrors.password && <span className="field-error">{fieldErrors.password}</span>}
+              {renderFieldError('password')}
             </div>
           </div>
 
-          {/* Подтверждение пароля */}
-          <div className='block'>
+          <div className="block">
             <div className="form-group">
               <h3>Подтвердите пароль</h3>
               <input
@@ -235,35 +265,54 @@ const Register = ({ onRegister }) => {
                 name="confirmPassword"
                 value={formData.confirmPassword}
                 onChange={handleChange}
-                required
-                minLength={6}
+                onBlur={handleBlur}
+                className={getFieldClass('confirmPassword')}
                 autoComplete="new-password"
+                placeholder="Повторите пароль"
               />
-              {fieldErrors.confirmPassword && <span className="field-error">{fieldErrors.confirmPassword}</span>}
-            </div>
-          </div>
-          <div className='block'>
-            <div className='form-row-3'>
-              <input
-                type="checkbox"
-                checked={isChecked}
-                onChange={handleCheckboxChange}
-                style={{
-                  cursor: 'pointer',
-                }} />
-              <span>Я согласен на обработку персональных данных и с условиями
-                пользовательского соглашения
-              </span>
-              {/* {isChecked ? "Выбрано" : "Не выбрано"} */}
+              {renderFieldError('confirmPassword')}
             </div>
           </div>
 
-          <div className='block'>
-            <div className='form-row'>
-              <button type="submit" disabled={loading} className='register-btn'>
-                {loading ? 'Регистрация...' : 'Зарегистрироваться'}
-              </button>
-            </div>
+          <div
+            className={`consent-block ${
+              consentTouched && !isChecked
+                ? 'consent-block--invalid'
+                : isChecked
+                ? 'consent-block--valid'
+                : ''
+            }`}
+          >
+            <label className="consent-label">
+              <input
+                type="checkbox"
+                checked={isChecked}
+                onChange={(e) => {
+                  setIsChecked(e.target.checked);
+                  setConsentTouched(true);
+                }}
+              />
+              <span>
+                Я согласен на обработку персональных данных и с условиями пользовательского соглашения
+              </span>
+            </label>
+            {consentTouched && !isChecked && (
+              <span className="field-error">Необходимо согласие для регистрации</span>
+            )}
+          </div>
+
+          <div className="register-submit-wrap">
+            <button
+              type="submit"
+              disabled={!canSubmit}
+              className="register-btn"
+              title={!canSubmit ? 'Исправьте ошибки и отметьте согласие' : ''}
+            >
+              {loading ? 'Регистрация...' : 'Зарегистрироваться'}
+            </button>
+            {!canSubmit && !loading && (
+              <p className="register-hint">Заполните все поля корректно и подтвердите согласие</p>
+            )}
           </div>
         </form>
 
