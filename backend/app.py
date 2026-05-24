@@ -14,7 +14,7 @@ from flask_jwt_extended import (
 )
 
 from config import JWT_ACCESS_TOKEN_EXPIRES_HOURS, UPLOAD_DIR
-from db import get_db, init_db, user_to_dict, build_full_name
+from db import get_db, init_db, user_to_dict, build_full_name_from_parts, insert_user_row
 from services.email_service import send_verification_code, send_password_reset
 from reference import register_reference_routes, resolve_doctor
 from utils import (
@@ -70,13 +70,12 @@ def register():
     if not all(k in data and data[k] for k in required):
         return jsonify({'success': False, 'message': 'Заполните обязательные поля'}), 400
 
-    first_name = data.get('name', '').strip()
-    lastname = data.get('lastname', '').strip()
-    patronymic = data.get('patronymic', '').strip()
-    full_name = build_full_name(lastname, first_name, patronymic)
-    if not full_name:
-        full_name = data.get('email', '').split('@')[0]
-        first_name = first_name or full_name
+    full_name = build_full_name_from_parts(
+        data.get('lastname', '').strip(),
+        data.get('name', '').strip(),
+        data.get('patronymic', '').strip(),
+        data.get('email', '').split('@')[0],
+    )
 
     email = data['email'].strip().lower()
     if '@' not in email:
@@ -93,15 +92,17 @@ def register():
 
     code = generate_code()
     pwd_hash = bcrypt.hashpw(data['password'].encode(), bcrypt.gensalt()).decode()
-    cursor.execute('''
-        INSERT INTO users (name, lastname, first_name, patronymic, email, password_hash,
-                           sex, birth_date, verification_code, verification_expires, email_verified)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0)
-    ''', (
-        full_name, lastname, first_name, patronymic, email, pwd_hash,
-        data['sex'], data['birth_date'], code, code_expires(30),
-    ))
-    user_id = cursor.lastrowid
+    user_id = insert_user_row(
+        cursor,
+        full_name=full_name,
+        email=email,
+        password_hash=pwd_hash,
+        sex=data['sex'],
+        birth_date=data['birth_date'],
+        email_verified=0,
+        verification_code=code,
+        verification_expires=code_expires(30),
+    )
     conn.commit()
     conn.close()
 
@@ -325,7 +326,7 @@ def profile():
     conn = get_db()
     cursor = conn.cursor()
     cursor.execute(
-        'SELECT id, name, lastname, first_name, patronymic, email, sex, birth_date, role, '
+        'SELECT id, full_name, email, sex, birth_date, role, '
         'email_verified, two_factor_enabled, created_at FROM users WHERE id = ?',
         (user_id,),
     )
@@ -421,20 +422,20 @@ def create_appointment():
 
     conn = get_db()
     cursor = conn.cursor()
-    doctor_id, doctor_name = resolve_doctor(
+    doctor_id, specialty = resolve_doctor(
         cursor, user_id,
         doctor_id=data.get('doctor_id'),
-        doctor_name=data.get('type') or data.get('doctor_name'),
+        specialty=data.get('specialty') or data.get('type') or data.get('doctor_name'),
     )
-    if not doctor_name:
+    if not specialty:
         conn.close()
-        return jsonify({'success': False, 'message': 'Укажите врача'}), 400
+        return jsonify({'success': False, 'message': 'Укажите специальность врача'}), 400
 
     cursor.execute('''
         INSERT INTO appointments (user_id, type, doctor_id, description, appointment_date, diagnosis)
         VALUES (?, ?, ?, ?, ?, ?)
     ''', (
-        user_id, doctor_name, doctor_id, data.get('description', ''),
+        user_id, specialty, doctor_id, data.get('description', ''),
         data['appointment_date'], data.get('diagnosis', ''),
     ))
     conn.commit()
@@ -455,7 +456,7 @@ def get_appointments():
     date_to = request.args.get('date_to', '').strip()
     conn = get_db()
     cursor = conn.cursor()
-    q = 'SELECT a.*, d.name as doctor_name FROM appointments a LEFT JOIN doctors d ON a.doctor_id = d.id WHERE a.user_id = ?'
+    q = 'SELECT a.*, d.specialty as doctor_specialty FROM appointments a LEFT JOIN doctors d ON a.doctor_id = d.id WHERE a.user_id = ?'
     params = [user_id]
     if doctor_id:
         q += ' AND a.doctor_id = ?'
@@ -500,15 +501,15 @@ def update_appointment(appointment_id):
         conn.close()
         return jsonify({'success': False, 'message': 'Приём не найден'}), 404
     fields, values = [], []
-    if 'doctor_id' in data or 'type' in data or 'doctor_name' in data:
-        did, dname = resolve_doctor(
+    if 'doctor_id' in data or 'type' in data or 'doctor_name' in data or 'specialty' in data:
+        did, spec = resolve_doctor(
             cursor, user_id,
             doctor_id=data.get('doctor_id'),
-            doctor_name=data.get('type') or data.get('doctor_name'),
+            specialty=data.get('specialty') or data.get('type') or data.get('doctor_name'),
         )
-        if dname:
+        if spec:
             fields.extend(['type = ?', 'doctor_id = ?'])
-            values.extend([dname, did])
+            values.extend([spec, did])
     for key in ('description', 'appointment_date', 'diagnosis'):
         if key in data:
             fields.append(f'{key} = ?')
@@ -939,7 +940,7 @@ def admin_stats():
     cursor.execute('SELECT COUNT(*) as c FROM user_vaccinations')
     vaccinations_count = cursor.fetchone()['c']
     cursor.execute('''
-        SELECT id, name, email, role, email_verified, created_at FROM users
+        SELECT id, full_name, email, role, email_verified, created_at FROM users
         ORDER BY created_at DESC LIMIT 50
     ''')
     recent_users = [_public_user(r) for r in cursor.fetchall()]
@@ -1081,23 +1082,74 @@ def get_calendar_events():
             })
 
         cursor.execute('''
-            SELECT id, type, value, unit, analysis_date, notes
-            FROM analyses WHERE user_id = ? AND analysis_date IS NOT NULL
+            SELECT a.id, a.type, a.value, a.unit, a.analysis_date, a.notes,
+                   a.batch_id, a.panel_id, p.name as panel_name
+            FROM analyses a
+            LEFT JOIN analysis_panels p ON a.panel_id = p.id
+            WHERE a.user_id = ? AND a.analysis_date IS NOT NULL
+            ORDER BY a.analysis_date, a.batch_id, a.id
         ''', (user_id,))
-        for analysis in cursor.fetchall():
+        analyses = [dict(r) for r in cursor.fetchall()]
+        batch_groups = {}
+        singles = []
+        for a in analyses:
+            if a.get('batch_id'):
+                key = (a['analysis_date'], a['batch_id'])
+                batch_groups.setdefault(key, []).append(a)
+            else:
+                singles.append(a)
+
+        for a in singles:
             events.append({
-                'id': f'analysis_{analysis["id"]}',
-                'title': f'🧪 {analysis["type"]}: {analysis["value"]} {analysis["unit"]}',
-                'start': analysis['analysis_date'],
+                'id': f'analysis_{a["id"]}',
+                'title': f'🧪 {a["type"]}: {a["value"]} {a["unit"]}',
+                'start': a['analysis_date'],
                 'className': 'event-analysis',
                 'backgroundColor': '#8b5cf6',
                 'borderColor': '#7c3aed',
                 'extendedProps': {
                     'type': 'Анализ',
-                    'description': analysis['notes'] or '',
-                    'value': f'{analysis["value"]} {analysis["unit"]}',
+                    'description': a['notes'] or '',
+                    'value': f'{a["value"]} {a["unit"]}',
                     'table': 'analyses',
-                    'record_id': analysis['id'],
+                    'record_id': a['id'],
+                    'is_panel_group': False,
+                },
+            })
+
+        for (date, batch_id), items in batch_groups.items():
+            panel_name = items[0].get('panel_name') or 'Комплекс анализов'
+            summary = ', '.join(
+                f'{it["type"]}: {it["value"]} {it["unit"]}' for it in items[:3]
+            )
+            if len(items) > 3:
+                summary += f' (+{len(items) - 3})'
+            events.append({
+                'id': f'panel_{batch_id}',
+                'title': f'🧪 {panel_name} ({len(items)})',
+                'start': date,
+                'className': 'event-analysis event-panel-group',
+                'backgroundColor': '#7c3aed',
+                'borderColor': '#5b21b6',
+                'extendedProps': {
+                    'type': 'Комплекс анализов',
+                    'description': summary,
+                    'table': 'analysis_panel',
+                    'is_panel_group': True,
+                    'batch_id': batch_id,
+                    'panel_id': items[0].get('panel_id'),
+                    'panel_name': panel_name,
+                    'items': [
+                        {
+                            'id': it['id'],
+                            'type': it['type'],
+                            'value': it['value'],
+                            'unit': it['unit'],
+                            'notes': it.get('notes') or '',
+                            'table': 'analyses',
+                        }
+                        for it in items
+                    ],
                 },
             })
 
@@ -1159,10 +1211,14 @@ def add_calendar_event():
     conn = get_db()
     cursor = conn.cursor()
     if table == 'appointments':
+        doctor_id, specialty = resolve_doctor(cursor, user_id, specialty=title)
+        if not specialty:
+            conn.close()
+            return jsonify({'success': False, 'message': 'Укажите специальность врача'}), 400
         cursor.execute('''
-            INSERT INTO appointments (user_id, type, description, appointment_date)
-            VALUES (?, ?, ?, ?)
-        ''', (user_id, title, description, event_date))
+            INSERT INTO appointments (user_id, type, doctor_id, description, appointment_date)
+            VALUES (?, ?, ?, ?, ?)
+        ''', (user_id, specialty, doctor_id, description, event_date))
     elif table == 'analyses':
         extra = data.get('extra', {})
         cursor.execute('''
@@ -1190,8 +1246,21 @@ def add_calendar_event():
 
 register_reference_routes(app)
 
+
+@app.before_request
+def _ensure_db_initialized():
+    """При удалении БД на лету — пересоздать схему при первом запросе."""
+    if not getattr(app, '_db_ready', False):
+        try:
+            init_db()
+            app._db_ready = True
+        except Exception:
+            pass
+
+
 if __name__ == '__main__':
     init_db()
+    app._db_ready = True
     print('API запущен: http://localhost:5000')
     print('Демо: demo@example.com / demo123')
     print('Админ: admin@med.local / admin123')

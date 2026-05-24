@@ -50,7 +50,7 @@ const Appointments = () => {
   const buildPayload = () => {
     if (useCustomDoctor) {
       return {
-        doctor_name: form.custom_doctor.trim(),
+        specialty: form.custom_doctor.trim(),
         appointment_date: form.appointment_date,
         description: form.description,
         diagnosis: form.diagnosis,
@@ -59,7 +59,8 @@ const Appointments = () => {
     const doc = doctors.find((d) => String(d.id) === String(form.doctor_id));
     return {
       doctor_id: form.doctor_id ? Number(form.doctor_id) : undefined,
-      type: doc?.name,
+      specialty: doc?.specialty,
+      type: doc?.specialty,
       appointment_date: form.appointment_date,
       description: form.description,
       diagnosis: form.diagnosis,
@@ -72,8 +73,8 @@ const Appointments = () => {
     setError('');
     try {
       const payload = buildPayload();
-      if (!payload.doctor_name && !payload.doctor_id && !payload.type) {
-        setError('Выберите или введите врача');
+      if (!payload.specialty && !payload.doctor_id && !payload.type) {
+        setError('Выберите или введите специальность');
         setSaving(false);
         return;
       }
@@ -105,7 +106,7 @@ const Appointments = () => {
   const handleEdit = (apt) => {
     setEditingId(apt.id);
     setActiveRecordId(apt.id);
-    const match = doctors.find((d) => d.id === apt.doctor_id || d.name === apt.type);
+    const match = doctors.find((d) => d.id === apt.doctor_id || d.specialty === apt.type);
     if (match) {
       setUseCustomDoctor(false);
       setForm({
@@ -119,7 +120,7 @@ const Appointments = () => {
       setUseCustomDoctor(true);
       setForm({
         doctor_id: '',
-        custom_doctor: apt.type || apt.doctor_name || '',
+        custom_doctor: apt.type || apt.doctor_specialty || '',
         appointment_date: apt.appointment_date,
         description: apt.description || '',
         diagnosis: apt.diagnosis || '',
@@ -144,23 +145,10 @@ const Appointments = () => {
     <div className="page">
       <header className="page-header">
         <h1>Приёмы</h1>
-        <p className="page-lead">Врачи из справочника или свой врач. Фото и файлы — после сохранения записи.</p>
+        <p className="page-lead">Специальность из справочника или своя. Фото и файлы — после сохранения записи.</p>
       </header>
 
-      <div className="filters-bar">
-        <select
-          value={filters.doctor_id}
-          onChange={(e) => setFilters({ ...filters, doctor_id: e.target.value })}
-        >
-          <option value="">Все врачи</option>
-          {doctors.map((d) => (
-            <option key={d.id} value={d.id}>{d.name}{d.is_global ? '' : ' (мой)'}</option>
-          ))}
-        </select>
-        <input type="date" value={filters.date_from} onChange={(e) => setFilters({ ...filters, date_from: e.target.value })} />
-        <input type="date" value={filters.date_to} onChange={(e) => setFilters({ ...filters, date_to: e.target.value })} />
-        <button type="button" className="btn btn-secondary" onClick={() => setFilters(emptyFilters)}>Сброс</button>
-      </div>
+
 
       <section className="card">
         <h2>{editingId ? 'Редактирование' : 'Новый приём'}</h2>
@@ -169,11 +157,11 @@ const Appointments = () => {
           <div className="form-grid">
             <label className="checkbox-row">
               <input type="checkbox" checked={useCustomDoctor} onChange={(e) => setUseCustomDoctor(e.target.checked)} />
-              Свой врач (если нет в списке)
+              Своя специальность (если нет в списке)
             </label>
             {useCustomDoctor ? (
               <label>
-                ФИО / специальность
+                Специальность
                 <input
                   value={form.custom_doctor}
                   onChange={(e) => setForm({ ...form, custom_doctor: e.target.value })}
@@ -182,7 +170,7 @@ const Appointments = () => {
               </label>
             ) : (
               <label>
-                Врач
+                Специальность
                 <select
                   value={form.doctor_id}
                   onChange={(e) => setForm({ ...form, doctor_id: e.target.value })}
@@ -190,7 +178,7 @@ const Appointments = () => {
                 >
                   <option value="">— выберите —</option>
                   {doctors.map((d) => (
-                    <option key={d.id} value={d.id}>{d.name}</option>
+                    <option key={d.id} value={d.id}>{d.specialty}</option>
                   ))}
                 </select>
               </label>
@@ -217,11 +205,27 @@ const Appointments = () => {
 
       <section className="card">
         <h2>История</h2>
+        <div className="filters-bar">
+        <label>Поиск по названию <input value={filters.search} onChange={(e) => setFilters({ ...filters, search: e.target.value })} /></label>
+        <select
+          value={filters.doctor_id}
+          onChange={(e) => setFilters({ ...filters, doctor_id: e.target.value })}
+        >
+          <option value="">Все специальности</option>
+          {doctors.map((d) => (
+            <option key={d.id} value={d.id}>{d.specialty}{d.is_global ? '' : ' (моя)'}</option>
+          ))}
+        </select>
+        <input type="date" value={filters.date_from} onChange={(e) => setFilters({ ...filters, date_from: e.target.value })} />
+        <input type="date" value={filters.date_to} onChange={(e) => setFilters({ ...filters, date_to: e.target.value })} />
+        <button type="button" className="btn btn-secondary" onClick={() => setFilters(emptyFilters)}>Сброс</button>
+      </div>
+
         {appointments.length ? (
           <div className="record-list">
             {appointments.map((apt) => (
               <article key={apt.id} className="record-card" onClick={() => setModalItem(apt)}>
-                <h3>{apt.doctor_name || apt.type}</h3>
+                <h3>{apt.doctor_specialty || apt.type}</h3>
                 <p>{new Date(apt.appointment_date).toLocaleDateString('ru-RU')}</p>
                 <div className="record-card-actions" onClick={(e) => e.stopPropagation()}>
                   <button type="button" className="btn btn-secondary" onClick={() => handleEdit(apt)}>Изменить</button>
@@ -239,7 +243,7 @@ const Appointments = () => {
         <div className="modal-backdrop" onClick={() => setModalItem(null)}>
           <div className="modal-card modal-card--wide" onClick={(e) => e.stopPropagation()}>
             <div className="modal-header">
-              <div className="modal-title">{modalItem.doctor_name || modalItem.type}</div>
+              <div className="modal-title">{modalItem.doctor_specialty || modalItem.type}</div>
               <button type="button" className="modal-close" onClick={() => setModalItem(null)}>×</button>
             </div>
             <div className="modal-body">

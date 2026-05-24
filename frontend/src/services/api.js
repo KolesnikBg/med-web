@@ -334,6 +334,18 @@ class ApiService {
     return this.request('/admin/analysis-panels', { method: 'POST', body: data });
   }
 
+  async adminUpdatePanel(id, data) {
+    return this.request(`/admin/analysis-panels/${id}`, { method: 'PUT', body: data });
+  }
+
+  async adminDeletePanel(id) {
+    return this.request(`/admin/analysis-panels/${id}`, { method: 'DELETE' });
+  }
+
+  async deleteAnalysesBatch(batchId) {
+    return this.request(`/analyses/batch/${encodeURIComponent(batchId)}`, { method: 'DELETE' });
+  }
+
   async adminCreateVaccineSchedule(data) {
     return this.request('/admin/vaccine-schedules', { method: 'POST', body: data });
   }
@@ -352,7 +364,10 @@ class ApiService {
     return this.request('/calendar/events', { method: 'POST', body: eventData });
   }
 
-  async deleteCalendarEvent(table, recordId) {
+  async deleteCalendarEvent(table, recordId, extra = {}) {
+    if (table === 'analysis_panel') {
+      return this.deleteAnalysesBatch(extra.batchId);
+    }
     if (table === 'appointments') return this.deleteAppointment(recordId);
     if (table === 'analyses') return this.deleteAnalysis(recordId);
     if (table === 'user_vaccinations') return this.deleteUserVaccination(recordId);

@@ -14,11 +14,89 @@ def get_db():
     return conn
 
 
-def _add_column_if_missing(cursor, table, column, definition):
+def _table_columns(cursor, table):
     cursor.execute(f'PRAGMA table_info({table})')
-    cols = {row[1] for row in cursor.fetchall()}
+    return {row[1] for row in cursor.fetchall()}
+
+
+def _add_column_if_missing(cursor, table, column, definition):
+    cursor.execute(
+        "SELECT name FROM sqlite_master WHERE type='table' AND name=?",
+        (table,),
+    )
+    if not cursor.fetchone():
+        return
+    cols = _table_columns(cursor, table)
     if column not in cols:
         cursor.execute(f'ALTER TABLE {table} ADD COLUMN {column} {definition}')
+
+
+def build_full_name_from_parts(lastname='', first_name='', patronymic='', fallback=''):
+    """Склейка ФИО — только для формы регистрации, в БД хранится одной строкой."""
+    return ' '.join(p for p in (lastname, first_name, patronymic) if p) or fallback
+
+
+def _migrate_users_full_name(cursor):
+    cols = _table_columns(cursor, 'users')
+    if 'full_name' not in cols:
+        return
+    if 'lastname' in cols or 'first_name' in cols or 'patronymic' in cols:
+        cursor.execute('''
+            UPDATE users SET full_name = TRIM(
+                COALESCE(NULLIF(full_name, ''),
+                    NULLIF(TRIM(
+                        COALESCE(lastname, '') || ' ' ||
+                        COALESCE(first_name, '') || ' ' ||
+                        COALESCE(patronymic, '')
+                    ), ''),
+                    name, '')
+            )
+            WHERE full_name IS NULL OR full_name = ''
+        ''')
+    elif 'name' in cols:
+        cursor.execute('''
+            UPDATE users SET full_name = name
+            WHERE (full_name IS NULL OR full_name = '') AND name IS NOT NULL AND name != ''
+        ''')
+
+
+def insert_user_row(
+    cursor,
+    *,
+    full_name,
+    email,
+    password_hash,
+    sex,
+    birth_date,
+    role='user',
+    email_verified=0,
+    verification_code=None,
+    verification_expires=None,
+):
+    display = (full_name or '').strip() or email.split('@')[0]
+    row = {
+        'full_name': display,
+        'email': email,
+        'password_hash': password_hash,
+        'sex': sex,
+        'birth_date': birth_date,
+        'role': role,
+        'email_verified': email_verified,
+    }
+    cols = _table_columns(cursor, 'users')
+    if 'name' in cols:
+        row['name'] = display
+    if verification_code is not None:
+        row['verification_code'] = verification_code
+        row['verification_expires'] = verification_expires
+
+    keys = [k for k in row if k in cols]
+    placeholders = ', '.join('?' * len(keys))
+    cursor.execute(
+        f"INSERT INTO users ({', '.join(keys)}) VALUES ({placeholders})",
+        [row[k] for k in keys],
+    )
+    return cursor.lastrowid
 
 
 def init_db():
@@ -28,7 +106,6 @@ def init_db():
     cursor.execute('''
         CREATE TABLE IF NOT EXISTS users (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
-            name TEXT NOT NULL,
             email TEXT UNIQUE NOT NULL,
             password_hash TEXT NOT NULL,
             sex TEXT NOT NULL,
@@ -37,6 +114,8 @@ def init_db():
         )
     ''')
 
+    _add_column_if_missing(cursor, 'users', 'full_name', 'TEXT')
+    _add_column_if_missing(cursor, 'users', 'name', 'TEXT')
     _add_column_if_missing(cursor, 'users', 'role', "TEXT DEFAULT 'user'")
     _add_column_if_missing(cursor, 'users', 'email_verified', 'INTEGER DEFAULT 0')
     _add_column_if_missing(cursor, 'users', 'verification_code', 'TEXT')
@@ -45,16 +124,7 @@ def init_db():
     _add_column_if_missing(cursor, 'users', 'reset_expires', 'TEXT')
     _add_column_if_missing(cursor, 'users', 'totp_secret', 'TEXT')
     _add_column_if_missing(cursor, 'users', 'two_factor_enabled', 'INTEGER DEFAULT 0')
-    _add_column_if_missing(cursor, 'users', 'lastname', 'TEXT')
-    _add_column_if_missing(cursor, 'users', 'first_name', 'TEXT')
-    _add_column_if_missing(cursor, 'users', 'patronymic', 'TEXT')
-
-    cursor.execute('''
-        UPDATE users SET first_name = name
-        WHERE (first_name IS NULL OR first_name = '')
-          AND name IS NOT NULL AND name != ''
-          AND (lastname IS NULL OR lastname = '')
-    ''')
+    _migrate_users_full_name(cursor)
 
     cursor.execute('''
         CREATE TABLE IF NOT EXISTS appointments (
@@ -82,6 +152,9 @@ def init_db():
             FOREIGN KEY (user_id) REFERENCES users (id) ON DELETE CASCADE
         )
     ''')
+
+    _add_column_if_missing(cursor, 'analyses', 'panel_id', 'INTEGER')
+    _add_column_if_missing(cursor, 'analyses', 'batch_id', 'TEXT')
 
     cursor.execute('''
         CREATE TABLE IF NOT EXISTS vaccines (
@@ -125,9 +198,6 @@ def init_db():
     cursor.execute('CREATE INDEX IF NOT EXISTS idx_attachments_record ON attachments(record_type, record_id)')
     cursor.execute('CREATE INDEX IF NOT EXISTS idx_analyses_user_type ON analyses(user_id, type)')
 
-    from reference import init_reference_tables
-    init_reference_tables(cursor)
-
     cursor.execute('SELECT COUNT(*) FROM vaccines')
     if cursor.fetchone()[0] == 0:
         standard_vaccines = [
@@ -151,13 +221,13 @@ def init_db():
                 (name, desc, cat),
             )
 
-    _seed_user(
-        cursor, 'demo@example.com', 'demo123', 'Пользователь Демо',
-        verified=True, lastname='Пользователь', first_name='Демо',
-    )
+    from reference import init_reference_tables
+    init_reference_tables(cursor)
+
+    _seed_user(cursor, 'demo@example.com', 'demo123', 'Пользователь Демо', verified=True)
     _seed_user(
         cursor, 'admin@med.local', 'admin123', 'Администратор Системы',
-        verified=True, role='admin', lastname='Администратор', first_name='Системы',
+        verified=True, role='admin',
     )
 
     cursor.execute('''
@@ -166,24 +236,19 @@ def init_db():
     ''')
     cursor.execute("UPDATE users SET role = 'admin' WHERE email = 'admin@med.local'")
     cursor.execute('''
-        UPDATE users SET lastname = 'Пользователь', first_name = 'Демо', name = 'Пользователь Демо'
-        WHERE email = 'demo@example.com' AND (lastname IS NULL OR lastname = '')
+        UPDATE users SET full_name = 'Пользователь Демо'
+        WHERE email = 'demo@example.com' AND (full_name IS NULL OR full_name = '')
     ''')
     cursor.execute('''
-        UPDATE users SET lastname = 'Администратор', first_name = 'Системы', name = 'Администратор Системы'
-        WHERE email = 'admin@med.local' AND (lastname IS NULL OR lastname = '')
+        UPDATE users SET full_name = 'Администратор Системы'
+        WHERE email = 'admin@med.local' AND (full_name IS NULL OR full_name = '')
     ''')
 
     conn.commit()
     conn.close()
 
 
-def build_full_name(lastname='', first_name='', patronymic='', fallback=''):
-    return ' '.join(p for p in (lastname, first_name, patronymic) if p) or fallback
-
-
-def _seed_user(cursor, email, password, display_name, verified=False, role='user',
-               lastname='', first_name='', patronymic=''):
+def _seed_user(cursor, email, password, full_name, verified=False, role='user'):
     cursor.execute('SELECT id FROM users WHERE email = ?', (email,))
     if cursor.fetchone():
         cursor.execute(
@@ -194,23 +259,17 @@ def _seed_user(cursor, email, password, display_name, verified=False, role='user
             cursor.execute("UPDATE users SET role = 'admin' WHERE email = ?", (email,))
         return
 
-    if not first_name and display_name:
-        parts = display_name.split()
-        if len(parts) >= 2:
-            lastname, first_name = parts[0], parts[1]
-            patronymic = ' '.join(parts[2:]) if len(parts) > 2 else ''
-        else:
-            first_name = display_name
-
-    full_name = build_full_name(lastname, first_name, patronymic, display_name)
     pwd = bcrypt.hashpw(password.encode(), bcrypt.gensalt()).decode()
-    cursor.execute('''
-        INSERT INTO users (name, lastname, first_name, patronymic, email, password_hash,
-                         sex, birth_date, role, email_verified)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-    ''', (full_name, lastname, first_name, patronymic, email, pwd,
-          'male', '1990-01-01', role, 1 if verified else 0))
-    user_id = cursor.lastrowid
+    user_id = insert_user_row(
+        cursor,
+        full_name=full_name,
+        email=email,
+        password_hash=pwd,
+        sex='male',
+        birth_date='1990-01-01',
+        role=role,
+        email_verified=1 if verified else 0,
+    )
 
     if email == 'demo@example.com':
         cursor.execute('''
@@ -241,12 +300,20 @@ def user_to_dict(row):
     d['is_admin'] = d.get('role') == 'admin'
     d['two_factor_enabled'] = bool(d.get('two_factor_enabled'))
     d['email_verified'] = bool(d.get('email_verified'))
-    ln = (d.get('lastname') or '').strip()
-    fn = (d.get('first_name') or '').strip()
-    pat = (d.get('patronymic') or '').strip()
-    d['full_name'] = build_full_name(ln, fn, pat, d.get('name') or '')
-    d['name'] = d['full_name']
-    for key in ('password_hash', 'verification_code', 'verification_expires',
-                'reset_code', 'reset_expires', 'totp_secret'):
+
+    full = (d.get('full_name') or d.get('name') or '').strip()
+    if not full:
+        full = build_full_name_from_parts(
+            d.get('lastname') or '',
+            d.get('first_name') or '',
+            d.get('patronymic') or '',
+        )
+    d['full_name'] = full
+
+    for key in (
+        'password_hash', 'verification_code', 'verification_expires',
+        'reset_code', 'reset_expires', 'totp_secret', 'name',
+        'lastname', 'first_name', 'patronymic',
+    ):
         d.pop(key, None)
     return d

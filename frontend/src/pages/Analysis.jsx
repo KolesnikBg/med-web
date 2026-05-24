@@ -34,7 +34,7 @@ const Analysis = () => {
   const [panelId, setPanelId] = useState('');
   const [panelDate, setPanelDate] = useState('');
   const [panelRows, setPanelRows] = useState([]);
-  const [catalog, setCatalog] = useState([]);
+  const [catalog, setCatalog] = useState([]); // Массив справочника анализа
   const [panels, setPanels] = useState([]);
   const [filters, setFilters] = useState(emptyFilters);
   const [chartType, setChartType] = useState('');
@@ -164,7 +164,11 @@ const Analysis = () => {
         setLoading(false);
         return;
       }
-      await api.createAnalysesBatch({ analysis_date: panelDate, results });
+      await api.createAnalysesBatch({
+        analysis_date: panelDate,
+        panel_id: panelId ? Number(panelId) : undefined,
+        results,
+      });
       setPanelRows([]);
       setPanelId('');
       await loadList();
@@ -214,38 +218,6 @@ const Analysis = () => {
 
       {error && <div className="error-message">{error}</div>}
 
-      <div className="filters-bar">
-        <input
-          placeholder="Поиск по названию"
-          value={filters.search}
-          onChange={(e) => setFilters({ ...filters, search: e.target.value })}
-        />
-        <select
-          value={filters.type}
-          onChange={(e) => setFilters({ ...filters, type: e.target.value })}
-        >
-          <option value="">Все типы</option>
-          {typeOptions.map((t) => (
-            <option key={t} value={t}>{t}</option>
-          ))}
-        </select>
-        <input
-          type="date"
-          value={filters.date_from}
-          onChange={(e) => setFilters({ ...filters, date_from: e.target.value })}
-          title="С даты"
-        />
-        <input
-          type="date"
-          value={filters.date_to}
-          onChange={(e) => setFilters({ ...filters, date_to: e.target.value })}
-          title="По дату"
-        />
-        <button type="button" className="btn btn-secondary" onClick={() => setFilters(emptyFilters)}>
-          Сброс
-        </button>
-      </div>
-
       <div className="tabs">
         <button type="button" className={mode === 'single' ? 'tab active' : 'tab'} onClick={() => setMode('single')}>
           Один показатель
@@ -253,6 +225,7 @@ const Analysis = () => {
         <button type="button" className={mode === 'panel' ? 'tab active' : 'tab'} onClick={() => setMode('panel')}>
           Комплекс / панель
         </button>
+
       </div>
 
       <section className="card">
@@ -262,13 +235,18 @@ const Analysis = () => {
             <div className="form-grid">
               <label>
                 Из справочника
+                {/* Выбираем анализ из справочника */}
                 <select
+                  // Выбираем анализ из справочника
                   value={form.type}
-                  onChange={(e) => onCatalogPick(e.target.value)}
+                  // Обработка выбора анализа из справочника
+                  onChange={(e) => onCatalogPick(e.target.value)} // Вызываем функцию onCatalogPick с выбранным анализом
                 >
                   <option value="">— выберите —</option>
+                  {/* Отображаем анализы из справочника */}
                   {catalog.map((c) => (
-                    <option key={c.id} value={c.name}>{c.name}{c.is_global ? '' : ' (свой)'}</option>
+                    // Отображаем анализ из справочника
+                    <option key={c.id} value={c.name}>{c.name + ' (' + c.default_unit + ')'}{c.is_global ? '' : ' (свой)'}</option>
                   ))}
                 </select>
               </label>
@@ -400,15 +378,17 @@ const Analysis = () => {
             <label key={c.id} className="checkbox-row">
               <input
                 type="checkbox"
+                // Проверяем, выбран ли анализ в панели
                 checked={newPanel.selectedIds.includes(c.id)}
                 onChange={(e) => {
                   const ids = e.target.checked
+                    // Если анализ выбран, то добавляем его id в массив selectedIds
                     ? [...newPanel.selectedIds, c.id]
                     : newPanel.selectedIds.filter((id) => id !== c.id);
                   setNewPanel({ ...newPanel, selectedIds: ids });
                 }}
               />
-              {c.name}
+              {c.name + ' (' + c.default_unit + ')'}
             </label>
           ))}
         </div>
@@ -431,6 +411,25 @@ const Analysis = () => {
 
       <section className="card">
         <h2>Записи</h2>
+        <div className="filters">
+          <div className="form-grid">
+            <label>Поиск по названию <input value={filters.search} onChange={(e) => setFilters({ ...filters, search: e.target.value })} /></label>
+
+            <label>Поиск по типу<select value={filters.type} onChange={(e) => setFilters({ ...filters, type: e.target.value })}>
+              <option value="">Все типы</option>
+              {typeOptions.map((t) => (
+                <option key={t} value={t}>{t}</option>
+              ))}
+            </select></label>
+
+            <label>Дата с<input type="date" value={filters.date_from} onChange={(e) => setFilters({ ...filters, date_from: e.target.value })} /></label>
+            <label>Дата по<input type="date" value={filters.date_to} onChange={(e) => setFilters({ ...filters, date_to: e.target.value })} /></label>
+
+          </div>
+          <button type="button" className="btn btn-secondary" onClick={() => setFilters(emptyFilters)}>
+            Сброс
+          </button>
+        </div>
         {listLoading ? (
           <p className="loading">Загрузка...</p>
         ) : analyses.length ? (

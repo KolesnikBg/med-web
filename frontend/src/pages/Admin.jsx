@@ -22,9 +22,11 @@ const Admin = () => {
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(true);
 
-  const [doctorForm, setDoctorForm] = useState({ name: '', specialty: '' });
+  const [doctorForm, setDoctorForm] = useState({ specialty: '' });
   const [catalogForm, setCatalogForm] = useState({ name: '', default_unit: '' });
   const [panelForm, setPanelForm] = useState({ name: '', description: '', catalog_ids: [] });
+  const [editingPanelId, setEditingPanelId] = useState(null);
+  const [editPanelForm, setEditPanelForm] = useState({ name: '', catalog_ids: [] });
   const [vacForm, setVacForm] = useState({ name: '', description: '', category: 'standard' });
   const [schedForm, setSchedForm] = useState({
     vaccine_id: '',
@@ -99,7 +101,7 @@ const Admin = () => {
             <tbody>
               {users.map((u) => (
                 <tr key={u.id}>
-                  <td>{u.name}</td>
+                  <td>{u.full_name || '—'}</td>
                   <td>{u.email}</td>
                   <td>
                     {!u.is_admin && (
@@ -120,18 +122,17 @@ const Admin = () => {
         <section className="card">
           <form className="form-inline" onSubmit={async (e) => {
             e.preventDefault();
-            await api.adminCreateDoctor(doctorForm);
-            setDoctorForm({ name: '', specialty: '' });
+            await api.adminCreateDoctor({ specialty: doctorForm.specialty });
+            setDoctorForm({ specialty: '' });
             load();
           }}>
-            <input placeholder="Имя врача" value={doctorForm.name} onChange={(e) => setDoctorForm({ ...doctorForm, name: e.target.value })} required />
-            <input placeholder="Специальность" value={doctorForm.specialty} onChange={(e) => setDoctorForm({ ...doctorForm, specialty: e.target.value })} />
+            <input placeholder="Специальность (терапевт, кардиолог…)" value={doctorForm.specialty} onChange={(e) => setDoctorForm({ specialty: e.target.value })} required />
             <button type="submit" className="btn btn-primary">Добавить</button>
           </form>
           <ul className="simple-list">
             {doctors.map((d) => (
               <li key={d.id}>
-                {d.name} {d.specialty && `(${d.specialty})`}
+                {d.specialty}
                 <button type="button" className="btn-link" onClick={async () => { await api.adminDeleteDoctor(d.id); load(); }}>Удалить</button>
               </li>
             ))}
@@ -195,8 +196,91 @@ const Admin = () => {
             Создать панель
           </button>
           <ul className="simple-list">
-            {panels.map((p) => <li key={p.id}>{p.name}</li>)}
+            {panels.map((p) => (
+              <li key={p.id}>
+                {p.name}
+                <span className="simple-list-actions">
+                  <button
+                    type="button"
+                    className="btn-link"
+                    onClick={async () => {
+                      const res = await api.getAnalysisPanel(p.id);
+                      const ids = (res.panel?.items || [])
+                        .map((it) => it.catalog_id)
+                        .filter(Boolean);
+                      setEditingPanelId(p.id);
+                      setEditPanelForm({ name: res.panel?.name || p.name, catalog_ids: ids });
+                    }}
+                  >
+                    Изменить
+                  </button>
+                  <button
+                    type="button"
+                    className="btn-link"
+                    onClick={async () => {
+                      if (!window.confirm(`Удалить панель «${p.name}»?`)) return;
+                      await api.adminDeletePanel(p.id);
+                      if (editingPanelId === p.id) setEditingPanelId(null);
+                      load();
+                    }}
+                  >
+                    Удалить
+                  </button>
+                </span>
+              </li>
+            ))}
           </ul>
+
+          {editingPanelId && (
+            <div className="card card--nested">
+              <h3>Редактирование панели</h3>
+              <input
+                placeholder="Название"
+                value={editPanelForm.name}
+                onChange={(e) => setEditPanelForm({ ...editPanelForm, name: e.target.value })}
+              />
+              <div className="checkbox-grid">
+                {catalog.map((c) => (
+                  <label key={c.id} className="checkbox-row">
+                    <input
+                      type="checkbox"
+                      checked={editPanelForm.catalog_ids.includes(c.id)}
+                      onChange={(e) => {
+                        const ids = e.target.checked
+                          ? [...editPanelForm.catalog_ids, c.id]
+                          : editPanelForm.catalog_ids.filter((id) => id !== c.id);
+                        setEditPanelForm({ ...editPanelForm, catalog_ids: ids });
+                      }}
+                    />
+                    {c.name}
+                  </label>
+                ))}
+              </div>
+              <div className="form-inline">
+                <button
+                  type="button"
+                  className="btn btn-primary"
+                  onClick={async () => {
+                    const items = editPanelForm.catalog_ids.map((id) => {
+                      const c = catalog.find((x) => x.id === id);
+                      return { catalog_id: id, item_name: c?.name, default_unit: c?.default_unit };
+                    });
+                    await api.adminUpdatePanel(editingPanelId, {
+                      name: editPanelForm.name,
+                      items,
+                    });
+                    setEditingPanelId(null);
+                    load();
+                  }}
+                >
+                  Сохранить
+                </button>
+                <button type="button" className="btn btn-secondary" onClick={() => setEditingPanelId(null)}>
+                  Отмена
+                </button>
+              </div>
+            </div>
+          )}
         </section>
       )}
 

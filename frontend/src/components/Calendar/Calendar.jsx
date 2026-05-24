@@ -7,6 +7,7 @@ import timeGridPlugin from '@fullcalendar/timegrid';
 import multiMonthPlugin from '@fullcalendar/multimonth';
 import './Calendar.css';
 import api from '../../services/api';
+import Attachments from '../Attachments';
 
 // Типы событий
 const EVENT_TYPES = {
@@ -16,9 +17,15 @@ const EVENT_TYPES = {
 };
 
 const TYPE_LABELS = {
-    [EVENT_TYPES.APPOINTMENT]: 'Приём у врача',
+    [EVENT_TYPES.APPOINTMENT]: 'Приём',
     [EVENT_TYPES.ANALYSIS]: 'Анализ',
     [EVENT_TYPES.VACCINATION]: 'Прививка'
+};
+
+const parseRecordId = (idStr) => {
+    if (!idStr) return null;
+    const m = String(idStr).match(/_(\d+)$/);
+    return m ? Number(m[1]) : null;
 };
 
 const Calendar = () => {
@@ -32,6 +39,7 @@ const Calendar = () => {
     const [showFormModal, setShowFormModal] = useState(false);   // создание/редактирование
     const [formMode, setFormMode] = useState('create');          // 'create' | 'edit'
     const [currentView, setCurrentView] = useState('dayGridMonth');
+    const [attachmentRecordId, setAttachmentRecordId] = useState(null);
 
     // Функция для сохранения в localStorage:
     const handleViewChange = (viewName) => {
@@ -116,6 +124,7 @@ const Calendar = () => {
             description: '',
             extra: {}
         });
+        setAttachmentRecordId(null);
     };
 
     const openCreateForm = (date = null) => {
@@ -126,6 +135,10 @@ const Calendar = () => {
     };
 
     const openEditForm = (event) => {
+        if (event.extra?.is_panel_group) {
+            alert('Комплекс анализов редактируется в разделе «Анализы»');
+            return;
+        }
         setFormData({
             table: event.table,
             title: event.extra.diagnosis || event.extra.value || event.title.replace(/^[\🩺🧪💉\s⏰📋]+/, ''),
@@ -139,6 +152,7 @@ const Calendar = () => {
             }
         });
         setSelectedEvent(event);
+        setAttachmentRecordId(event.recordId || null);
         setFormMode('edit');
         setShowFormModal(true);
         setShowViewModal(false);
@@ -149,7 +163,13 @@ const Calendar = () => {
 
         try {
             if (formMode === 'create') {
-                await api.addCalendarEvent(formData);
+                const res = await api.addCalendarEvent(formData);
+                const rid = parseRecordId(res.id);
+                if (rid) {
+                    setAttachmentRecordId(rid);
+                    setFormMode('edit');
+                    return;
+                }
             } else {
                 await api.updateCalendarEvent(
                     formData.table,
@@ -180,10 +200,20 @@ const Calendar = () => {
 
     const handleDeleteEvent = async () => {
         if (!selectedEvent) return;
-        if (!window.confirm('Удалить это событие?')) return;
+        const isPanel = selectedEvent.extra?.is_panel_group;
+        const msg = isPanel
+            ? 'Удалить весь комплекс анализов?'
+            : 'Удалить это событие?';
+        if (!window.confirm(msg)) return;
 
         try {
-            await api.deleteCalendarEvent(selectedEvent.table, selectedEvent.recordId);
+            if (isPanel) {
+                await api.deleteCalendarEvent('analysis_panel', null, {
+                    batchId: selectedEvent.extra.batch_id,
+                });
+            } else {
+                await api.deleteCalendarEvent(selectedEvent.table, selectedEvent.recordId);
+            }
             await fetchEvents();
             setSelectedEvent(null);
             setShowViewModal(false);
@@ -205,6 +235,11 @@ const Calendar = () => {
             extra: props
         });
         setShowViewModal(true);
+    };
+
+    const attachmentRecordType = (table) => {
+        if (table === 'analysis_panel') return 'analyses';
+        return table;
     };
 
     const handleDateSelect = (selectInfo) => {
@@ -240,90 +275,52 @@ const Calendar = () => {
                 </div>
             </div>
 
+            <div className="calendar-fc-wrap">
             <FullCalendar
-                height="auto"
-                aspectRatio={1.5}  // ← пропорция ширины к высоте (меняйте под дизайн)
-                eventDisplay="block"
-                plugins={[
-                    dayGridPlugin,      // Месяц
-                    timeGridPlugin,     // Неделя/День
-                    multiMonthPlugin,   // Год
-                    interactionPlugin   // Клик/выбор даты
-                ]}
-
-                views={{
-                    dayGridMonth: {
-                        type: 'dayGrid',
-                        duration: { months: 1 },
-                        buttonText: 'Месяц',
-                        dayMaxEvents: 3
-                    },
-                    dayGridWeek: {  // ← НЕ timeGridWeek!
-                        type: 'dayGrid',
-                        duration: { weeks: 1 },
-                        buttonText: 'Неделя',
-                        dayMaxEvents: 5
-                    },
-                    multiMonthYear: {
-                        type: 'multiMonth',
-                        duration: { months: 12 },
-                        buttonText: 'Год',
-                        multiMonthMaxColumns: 3
-                    }
-                }}
+                plugins={[dayGridPlugin, timeGridPlugin, multiMonthPlugin, interactionPlugin]}
                 locale={ruLocale}
                 events={events}
                 eventContent={renderEventContent}
                 eventClick={handleEventClick}
-                selectable={true}
+                selectable
                 select={handleDateSelect}
+                selectLongPressDelay={100}
+                eventLongPressDelay={100}
                 headerToolbar={{
-                    left: 'prev,next',
+                    left: 'prev,next today',
                     center: 'title',
-                    right: 'dayGridMonth,dayGridWeek,multiMonthYear'  // ← dayGridWeek, не timeGridWeek!
+                    right: 'dayGridMonth,dayGridWeek,multiMonthYear'
                 }}
-                buttonText={{
-                    today: 'Сегодня',
-                    month: 'Месяц',
-                    week: 'Неделя',
-                    year: 'Год'
+                views={{
+                    dayGridMonth: { dayMaxEvents: 3 },
+                    dayGridWeek: { type: 'dayGrid', duration: { weeks: 1 }, dayMaxEvents: 5 },
+                    multiMonthYear: {
+                        type: 'multiMonth',
+                        duration: { months: 12 },
+                        multiMonthMaxColumns: 3,
+                    },
                 }}
-                firstDay={1} // Неделя с понедельника
+                buttonText={{ today: 'Сегодня' }}
+                firstDay={1}
                 height="auto"
+                aspectRatio={window.innerWidth < 480 ? 0.9 : 1.35}
                 eventDisplay="block"
-                // Обработка отображения в разных видах
+                handleWindowResize
+                initialView={currentView}
+                datesSet={(dateInfo) => {
+                    const viewName = dateInfo.view.type;
+                    if (viewName !== currentView) handleViewChange(viewName);
+                }}
                 eventDidMount={(info) => {
-                    // Добавляем тултип с описанием при наведении
                     if (info.event.extendedProps.description) {
                         info.el.title = info.event.extendedProps.description;
                     }
                 }}
-
-                // Адаптация под мобильные
-                handleWindowResize={true}
-
-                initialView={currentView}
-                datesSet={(dateInfo) => {
-                    // Сохраняем вид при переключении
-                    const viewName = dateInfo.view.type;
-                    if (viewName !== currentView) {
-                        handleViewChange(viewName);
-                    }
+                dateClick={(info) => {
+                    if (window.innerWidth <= 768) openCreateForm(info.dateStr);
                 }}
-                selectable={true}
-    select={handleDateSelect}
-    selectLongPressDelay={100}  // ← быстрее реакция на долгий тап
-    eventLongPressDelay={100}
-    
-    // Добавьте это для надёжности на мобильных:
-    eventClick={handleEventClick}
-    dateClick={(info) => {
-        // dateClick работает надёжнее select на мобильных
-        if (window.innerWidth <= 768) {
-            openCreateForm(info.dateStr);
-        }
-    }}
             />
+            </div>
 
             {/* 🔍 Модальное окно ПРОСМОТРА */}
             {showViewModal && selectedEvent && (
@@ -334,7 +331,16 @@ const Calendar = () => {
                         <div className="modal-body">
                             <p><strong>Тип:</strong> {selectedEvent.type}</p>
                             <p><strong>Дата:</strong> {new Date(selectedEvent.start).toLocaleDateString('ru-RU')}</p>
-                            {selectedEvent.extra.value && (
+                            {selectedEvent.extra.is_panel_group && selectedEvent.extra.items?.length > 0 && (
+                                <ul className="panel-items-list">
+                                    {selectedEvent.extra.items.map((it) => (
+                                        <li key={it.id}>
+                                            <strong>{it.type}:</strong> {it.value} {it.unit}
+                                        </li>
+                                    ))}
+                                </ul>
+                            )}
+                            {selectedEvent.extra.value && !selectedEvent.extra.is_panel_group && (
                                 <p><strong>Значение:</strong> {selectedEvent.extra.value}</p>
                             )}
                             {selectedEvent.extra.diagnosis && (
@@ -343,15 +349,31 @@ const Calendar = () => {
                             {selectedEvent.description && (
                                 <p><strong>Заметки:</strong> {selectedEvent.description}</p>
                             )}
+                            {selectedEvent.extra.is_panel_group ? (
+                                selectedEvent.extra.items?.map((it) => (
+                                    <div key={it.id} className="modal-attachments-block">
+                                        <p className="attachments-label">{it.type}</p>
+                                        <Attachments recordType="analyses" recordId={it.id} compact />
+                                    </div>
+                                ))
+                            ) : (
+                                <Attachments
+                                    recordType={attachmentRecordType(selectedEvent.table)}
+                                    recordId={selectedEvent.recordId}
+                                    compact
+                                />
+                            )}
                         </div>
                         <div className="modal-actions">
-                            <button className="btn-edit" onClick={() => openEditForm(selectedEvent)}>
-                                ✏️ Редактировать
-                            </button>
-                            <button className="btn-delete" onClick={handleDeleteEvent}>
+                            {!selectedEvent.extra.is_panel_group && (
+                                <button type="button" className="btn-edit" onClick={() => openEditForm(selectedEvent)}>
+                                    ✏️ Редактировать
+                                </button>
+                            )}
+                            <button type="button" className="btn-delete" onClick={handleDeleteEvent}>
                                 🗑️ Удалить
                             </button>
-                            <button onClick={() => setShowViewModal(false)}>Закрыть</button>
+                            <button type="button" onClick={() => setShowViewModal(false)}>Закрыть</button>
                         </div>
                     </div>
                 </div>
@@ -384,7 +406,7 @@ const Calendar = () => {
                             {/* Название */}
                             <div className="form-group">
                                 <label>
-                                    {formData.table === EVENT_TYPES.APPOINTMENT && 'Врач / Тип приёма *'}
+                                    {formData.table === EVENT_TYPES.APPOINTMENT && 'Специальность врача *'}
                                     {formData.table === EVENT_TYPES.ANALYSIS && 'Тип анализа *'}
                                     {formData.table === EVENT_TYPES.VACCINATION && 'Название прививки *'}
                                 </label>
@@ -485,12 +507,24 @@ const Calendar = () => {
                                 />
                             </div>
 
-                            {/* Кнопки */}
+                            {(formMode === 'edit' || attachmentRecordId) && formData.table !== EVENT_TYPES.VACCINATION && (
+                                <Attachments
+                                    recordType={formData.table}
+                                    recordId={attachmentRecordId || selectedEvent?.recordId}
+                                    compact
+                                />
+                            )}
+
                             <div className="modal-actions">
                                 <button type="submit" className="btn-primary">
                                     {formMode === 'create' ? '💾 Создать' : '💾 Сохранить'}
                                 </button>
-                                <button type="button" onClick={() => setShowFormModal(false)}>
+                                {attachmentRecordId && formMode === 'edit' && (
+                                    <button type="button" onClick={() => { setShowFormModal(false); resetForm(); fetchEvents(); }}>
+                                        Готово
+                                    </button>
+                                )}
+                                <button type="button" onClick={() => { setShowFormModal(false); resetForm(); }}>
                                     Отмена
                                 </button>
                             </div>
