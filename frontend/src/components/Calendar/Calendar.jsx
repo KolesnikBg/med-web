@@ -178,21 +178,40 @@ const Calendar = () => {
 
     const openEditForm = (event) => {
         if (event.extra?.is_panel_group) {
-            alert('Комплекс анализов редактируется в разделе «Анализы»');
-            return;
+            setAnalysisMode('panel');
+            setPanelRows((event.extra.items || []).map((it) => ({
+                id: it.id,
+                type: it.type,
+                unit: it.unit || '',
+                value: String(it.value ?? '').replace(/,/g, '.').split(/\s/)[0] || it.value,
+                notes: it.notes || '',
+            })));
+            setFormData({
+                table: EVENT_TYPES.ANALYSIS,
+                title: event.extra.panel_name || event.title.replace(/^🧪\s*/, ''),
+                date: event.start,
+                description: event.description || '',
+                extra: {
+                    batch_id: event.extra.batch_id,
+                    panel_id: event.extra.panel_id,
+                },
+            });
+        } else {
+            setAnalysisMode('catalog');
+            setPanelRows([]);
+            setFormData({
+                table: event.table,
+                title: event.extra.diagnosis || event.extra.value || event.title.replace(/^[\🩺🧪💉\s⏰📋]+/, ''),
+                date: event.start,
+                description: event.description || '',
+                extra: {
+                    unit: event.extra.unit,
+                    value: event.extra.value?.split(' ')[0],
+                    vaccine_id: event.table === EVENT_TYPES.VACCINATION ? event.recordId : undefined,
+                    custom_name: event.extra.category === 'custom' ? event.title : undefined,
+                },
+            });
         }
-        setFormData({
-            table: event.table,
-            title: event.extra.diagnosis || event.extra.value || event.title.replace(/^[\🩺🧪💉\s⏰📋]+/, ''),
-            date: event.start,
-            description: event.description || '',
-            extra: {
-                unit: event.extra.unit,
-                value: event.extra.value?.split(' ')[0],
-                vaccine_id: event.table === EVENT_TYPES.VACCINATION ? event.recordId : undefined,
-                custom_name: event.extra.category === 'custom' ? event.title : undefined
-            }
-        });
         setSelectedEvent(event);
         setAttachmentRecordId(event.recordId || null);
         setFormMode('edit');
@@ -238,6 +257,17 @@ const Calendar = () => {
                     payload.title = formData.extra.custom_name || formData.title;
                 }
                 await api.addCalendarEvent(payload);
+            } else if (selectedEvent?.extra?.is_panel_group) {
+                await Promise.all(
+                    panelRows.map((row) =>
+                        api.updateAnalysis(row.id, {
+                            analysis_date: formData.date,
+                            value: row.value,
+                            unit: row.unit,
+                            notes: row.notes || formData.description,
+                        })
+                    )
+                );
             } else {
                 await api.updateCalendarEvent(
                     formData.table,
@@ -248,10 +278,11 @@ const Calendar = () => {
                         [formData.table === EVENT_TYPES.APPOINTMENT ? 'appointment_date' :
                             formData.table === EVENT_TYPES.ANALYSIS ? 'analysis_date' : 'date_given']: formData.date,
                         description: formData.description,
+                        notes: formData.description,
                         ...(formData.table === EVENT_TYPES.ANALYSIS && {
                             unit: formData.extra.unit,
-                            value: formData.extra.value
-                        })
+                            value: formData.extra.value,
+                        }),
                     }
                 );
             }
@@ -368,7 +399,12 @@ const Calendar = () => {
                         multiMonthMaxColumns: 3,
                     },
                 }}
-                buttonText={{ today: 'Сегодня' }}
+                buttonText={{
+                    today: 'Сегодня',
+                    month: 'Месяц',
+                    week: 'Неделя',
+                    multiMonthYear: 'Год',
+                }}
                 firstDay={1}
                 height="auto"
                 aspectRatio={window.innerWidth < 480 ? 0.9 : 1.35}
@@ -430,16 +466,14 @@ const Calendar = () => {
                                 />
                             )}
                         </div>
-                        <div className="modal-actions">
-                            {!selectedEvent.extra.is_panel_group && (
-                                <button type="button" className="btn-edit" onClick={() => openEditForm(selectedEvent)}>
-                                    Редактировать
-                                </button>
-                            )}
-                            <button type="button" className="btn-delete" onClick={handleDeleteEvent}>
-                                 Удалить
+                        <div className="modal-actions modal-actions--view">
+                            <button type="button" className="btn-edit" onClick={() => openEditForm(selectedEvent)}>
+                                Редактировать
                             </button>
                             <button type="button" onClick={() => setShowViewModal(false)}>Закрыть</button>
+                            <button type="button" className="btn-delete" onClick={handleDeleteEvent}>
+                                Удалить
+                            </button>
                         </div>
                     </div>
                 </div>
@@ -639,6 +673,27 @@ const Calendar = () => {
                             </div>
 
                             {/* Поля для Анализов */}
+                            {formData.table === EVENT_TYPES.ANALYSIS && analysisMode === 'panel' && formMode === 'edit' && (
+                                <div className="panel-grid">
+                                    {panelRows.map((row, idx) => (
+                                        <div key={row.id || row.type} className="panel-row">
+                                            <span>{row.type} ({row.unit})</span>
+                                            <input
+                                                type="text"
+                                                placeholder="Значение"
+                                                value={row.value}
+                                                onChange={(e) => {
+                                                    const next = [...panelRows];
+                                                    next[idx] = { ...row, value: e.target.value };
+                                                    setPanelRows(next);
+                                                }}
+                                                required
+                                            />
+                                        </div>
+                                    ))}
+                                </div>
+                            )}
+
                             {formData.table === EVENT_TYPES.ANALYSIS && analysisMode !== 'panel' && (
                                 <>
                                     <div className="form-row">
@@ -684,9 +739,12 @@ const Calendar = () => {
                             {formMode === 'create' && (
                                 <Attachments draftKey={draftKey} compact />
                             )}
-                            {formMode === 'edit' && formData.table !== EVENT_TYPES.VACCINATION && (
+                            {formMode === 'edit' && selectedEvent?.extra?.is_panel_group && (
+                                <Attachments batchId={selectedEvent.extra.batch_id} compact />
+                            )}
+                            {formMode === 'edit' && !selectedEvent?.extra?.is_panel_group && (
                                 <Attachments
-                                    recordType={formData.table}
+                                    recordType={attachmentRecordType(formData.table)}
                                     recordId={selectedEvent?.recordId}
                                     compact
                                 />

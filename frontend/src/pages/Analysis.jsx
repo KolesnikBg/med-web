@@ -22,8 +22,36 @@ const parseNumeric = (val) => {
 
 const emptyFilters = { type: '', search: '', date_from: '', date_to: '' };
 
+const buildListItems = (analyses, panels) => {
+  const batchMap = new Map();
+  const singles = [];
+  analyses.forEach((a) => {
+    if (a.batch_id) {
+      const key = `${a.analysis_date}_${a.batch_id}`;
+      if (!batchMap.has(key)) {
+        const panel = panels.find((p) => p.id === a.panel_id);
+        batchMap.set(key, {
+          id: `panel_${a.batch_id}`,
+          is_panel_group: true,
+          batch_id: a.batch_id,
+          panel_id: a.panel_id,
+          panel_name: panel?.name || 'Комплекс анализов',
+          analysis_date: a.analysis_date,
+          items: [],
+        });
+      }
+      batchMap.get(key).items.push(a);
+    } else {
+      singles.push({ ...a, is_panel_group: false });
+    }
+  });
+  const panelGroups = [...batchMap.values()];
+  return { panelGroups, singles, all: [...panelGroups, ...singles] };
+};
+
 const Analysis = () => {
   const [mode, setMode] = useState('single');
+  const [listFilter, setListFilter] = useState('all');
   const [form, setForm] = useState({
     type: '',
     analysis_date: '',
@@ -34,7 +62,7 @@ const Analysis = () => {
   const [panelId, setPanelId] = useState('');
   const [panelDate, setPanelDate] = useState('');
   const [panelRows, setPanelRows] = useState([]);
-  const [catalog, setCatalog] = useState([]); // Массив справочника анализа
+  const [catalog, setCatalog] = useState([]);
   const [panels, setPanels] = useState([]);
   const [filters, setFilters] = useState(emptyFilters);
   const [chartType, setChartType] = useState('');
@@ -43,13 +71,29 @@ const Analysis = () => {
   const [loading, setLoading] = useState(false);
   const [listLoading, setListLoading] = useState(true);
   const [error, setError] = useState('');
-  const [editingId, setEditingId] = useState(null);
-  const [activeRecordId, setActiveRecordId] = useState(null);
   const [modalItem, setModalItem] = useState(null);
+  const [modalMode, setModalMode] = useState('view');
+  const [editForm, setEditForm] = useState(null);
+  const [editPanelRows, setEditPanelRows] = useState([]);
   const [newCatalog, setNewCatalog] = useState({ name: '', default_unit: '' });
   const [newPanel, setNewPanel] = useState({ name: '', selectedIds: [] });
   const [singleDraftKey, setSingleDraftKey] = useState(() => api.createDraftKey());
   const [panelDraftKey, setPanelDraftKey] = useState(() => api.createDraftKey());
+
+  const { panelGroups, singles, all: allListItems } = useMemo(
+    () => buildListItems(analyses, panels),
+    [analyses, panels]
+  );
+
+  const listItems = useMemo(() => {
+    if (listFilter === 'panels') return panelGroups;
+    if (listFilter === 'singles') return singles;
+    return allListItems.sort((a, b) =>
+      (b.analysis_date || '').localeCompare(a.analysis_date || '')
+    );
+  }, [listFilter, panelGroups, singles, allListItems]);
+
+  const catalogSelected = catalog.some((c) => c.name === form.type);
 
   const loadMeta = async () => {
     const [cat, pan, typesRes] = await Promise.all([
@@ -127,22 +171,18 @@ const Analysis = () => {
     }
   };
 
+  const resetCreateForm = () => {
+    setForm({ type: '', analysis_date: '', unit: '', value: '', notes: '' });
+    setSingleDraftKey(api.createDraftKey());
+  };
+
   const handleSingleSubmit = async (e) => {
     e.preventDefault();
     setLoading(true);
     setError('');
     try {
-      let id = editingId;
-      if (editingId) {
-        await api.updateAnalysis(editingId, form);
-      } else {
-        const res = await api.createAnalysis({ ...form, draft_key: singleDraftKey });
-        id = res.analysis?.id;
-        setSingleDraftKey(api.createDraftKey());
-      }
-      setActiveRecordId(id);
-      setEditingId(id);
-      setForm({ type: '', analysis_date: '', unit: '', value: '', notes: '' });
+      await api.createAnalysis({ ...form, draft_key: singleDraftKey });
+      resetCreateForm();
       await loadList();
       await loadMeta();
     } catch (err) {
@@ -175,6 +215,7 @@ const Analysis = () => {
       });
       setPanelRows([]);
       setPanelId('');
+      setPanelDate('');
       setPanelDraftKey(api.createDraftKey());
       await loadList();
       await loadMeta();
@@ -182,6 +223,88 @@ const Analysis = () => {
       setError(err.message);
     } finally {
       setLoading(false);
+    }
+  };
+
+  const openViewModal = (item) => {
+    setModalItem(item);
+    setModalMode('view');
+    setEditForm(null);
+    setEditPanelRows([]);
+  };
+
+  const openEditModal = (item) => {
+    setModalItem(item);
+    setModalMode('edit');
+    if (item.is_panel_group) {
+      setEditForm({
+        analysis_date: item.analysis_date,
+        notes: '',
+      });
+      setEditPanelRows(
+        item.items.map((a) => ({
+          id: a.id,
+          type: a.type,
+          unit: a.unit,
+          value: a.value,
+          notes: a.notes || '',
+        }))
+      );
+    } else {
+      setEditForm({
+        type: item.type,
+        analysis_date: item.analysis_date,
+        unit: item.unit,
+        value: item.value,
+        notes: item.notes || '',
+      });
+      setEditPanelRows([]);
+    }
+  };
+
+  const saveModalEdit = async () => {
+    setLoading(true);
+    setError('');
+    try {
+      if (modalItem.is_panel_group) {
+        await Promise.all(
+          editPanelRows.map((row) =>
+            api.updateAnalysis(row.id, {
+              analysis_date: editForm.analysis_date,
+              value: row.value,
+              unit: row.unit,
+              notes: row.notes || editForm.notes,
+            })
+          )
+        );
+      } else {
+        await api.updateAnalysis(modalItem.id, editForm);
+      }
+      setModalMode('view');
+      await loadList();
+      setModalItem(null);
+    } catch (err) {
+      setError(err.message);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const deleteModalItem = async () => {
+    const msg = modalItem.is_panel_group
+      ? 'Удалить весь комплекс анализов?'
+      : 'Удалить запись?';
+    if (!window.confirm(msg)) return;
+    try {
+      if (modalItem.is_panel_group) {
+        await api.deleteAnalysesBatch(modalItem.batch_id);
+      } else {
+        await api.deleteAnalysis(modalItem.id);
+      }
+      setModalItem(null);
+      await loadList();
+    } catch (err) {
+      setError(err.message);
     }
   };
 
@@ -214,6 +337,8 @@ const Analysis = () => {
     ...analyses.map((a) => a.type),
   ])].sort();
 
+  const editCatalogSelected = editForm && catalog.some((c) => c.name === editForm.type);
+
   return (
     <div className="page">
       <header className="page-header">
@@ -230,39 +355,34 @@ const Analysis = () => {
         <button type="button" className={mode === 'panel' ? 'tab active' : 'tab'} onClick={() => setMode('panel')}>
           Комплекс / панель
         </button>
-
       </div>
 
       <section className="card">
         {mode === 'single' ? (
           <form onSubmit={handleSingleSubmit}>
-            <h2>{editingId ? 'Редактирование' : 'Новый анализ'}</h2>
+            <h2>Новый анализ</h2>
             <div className="form-grid">
               <label>
                 Из справочника
-                {/* Выбираем анализ из справочника */}
-                <select
-                  // Выбираем анализ из справочника
-                  value={form.type}
-                  // Обработка выбора анализа из справочника
-                  onChange={(e) => onCatalogPick(e.target.value)} // Вызываем функцию onCatalogPick с выбранным анализом
-                >
+                <select value={form.type} onChange={(e) => onCatalogPick(e.target.value)}>
                   <option value="">— выберите —</option>
-                  {/* Отображаем анализы из справочника */}
                   {catalog.map((c) => (
-                    // Отображаем анализ из справочника
-                    <option key={c.id} value={c.name}>{c.name + ' (' + c.default_unit + ')'}{c.is_global ? '' : ' (свой)'}</option>
+                    <option key={c.id} value={c.name}>
+                      {c.name} ({c.default_unit}){c.is_global ? '' : ' (свой)'}
+                    </option>
                   ))}
                 </select>
               </label>
-              <label>
-                Или название
-                <input
-                  value={form.type}
-                  onChange={(e) => setForm({ ...form, type: e.target.value })}
-                  required
-                />
-              </label>
+              {!catalogSelected && (
+                <label>
+                  Или название
+                  <input
+                    value={form.type}
+                    onChange={(e) => setForm({ ...form, type: e.target.value })}
+                    required={!catalogSelected}
+                  />
+                </label>
+              )}
               <label>
                 Дата
                 <input type="date" value={form.analysis_date} onChange={(e) => setForm({ ...form, analysis_date: e.target.value })} required />
@@ -276,19 +396,11 @@ const Analysis = () => {
                 <input value={form.unit} onChange={(e) => setForm({ ...form, unit: e.target.value })} required />
               </label>
             </div>
+            <Attachments recordType="analyses" draftKey={singleDraftKey} />
             <button type="submit" className="btn btn-primary" disabled={loading}>
-              {loading ? '...' : 'Сохранить'}
+              {loading ? '...' : 'Добавить'}
             </button>
-            {editingId && (
-              <button type="button" className="btn-link" onClick={() => { setEditingId(null); setActiveRecordId(null); }}>
-                Отмена
-              </button>
-            )}
-            <Attachments
-              recordType="analyses"
-              recordId={activeRecordId || editingId}
-              draftKey={mode === 'single' ? singleDraftKey : panelDraftKey}
-            />
+            
           </form>
         ) : (
           <form onSubmit={handlePanelSubmit}>
@@ -388,17 +500,15 @@ const Analysis = () => {
             <label key={c.id} className="checkbox-row">
               <input
                 type="checkbox"
-                // Проверяем, выбран ли анализ в панели
                 checked={newPanel.selectedIds.includes(c.id)}
                 onChange={(e) => {
                   const ids = e.target.checked
-                    // Если анализ выбран, то добавляем его id в массив selectedIds
                     ? [...newPanel.selectedIds, c.id]
                     : newPanel.selectedIds.filter((id) => id !== c.id);
                   setNewPanel({ ...newPanel, selectedIds: ids });
                 }}
               />
-              {c.name + ' (' + c.default_unit + ')'}
+              {c.name} ({c.default_unit})
             </label>
           ))}
         </div>
@@ -421,20 +531,28 @@ const Analysis = () => {
 
       <section className="card">
         <h2>Записи</h2>
+        <div className="tabs" style={{ marginBottom: 12 }}>
+          <button type="button" className={listFilter === 'all' ? 'tab active' : 'tab'} onClick={() => setListFilter('all')}>
+            Все записи
+          </button>
+          <button type="button" className={listFilter === 'panels' ? 'tab active' : 'tab'} onClick={() => setListFilter('panels')}>
+            Комплексы / панели
+          </button>
+          <button type="button" className={listFilter === 'singles' ? 'tab active' : 'tab'} onClick={() => setListFilter('singles')}>
+            Один показатель
+          </button>
+        </div>
         <div className="filters">
           <div className="form-grid">
             <label>Поиск по названию<input value={filters.search} onChange={(e) => setFilters({ ...filters, search: e.target.value })} /></label>
-
             <label>Поиск по типу<select value={filters.type} onChange={(e) => setFilters({ ...filters, type: e.target.value })}>
               <option value="">Все типы</option>
               {typeOptions.map((t) => (
                 <option key={t} value={t}>{t}</option>
               ))}
             </select></label>
-
             <label>Дата с<input type="date" value={filters.date_from} onChange={(e) => setFilters({ ...filters, date_from: e.target.value })} /></label>
             <label>Дата по<input type="date" value={filters.date_to} onChange={(e) => setFilters({ ...filters, date_to: e.target.value })} /></label>
-
           </div>
           <button type="button" className="btn btn-secondary" onClick={() => setFilters(emptyFilters)}>
             Сброс
@@ -442,29 +560,25 @@ const Analysis = () => {
         </div>
         {listLoading ? (
           <p className="loading">Загрузка...</p>
-        ) : analyses.length ? (
+        ) : listItems.length ? (
           <div className="record-list">
-            {analyses.map((item) => (
-              <article key={item.id} className="record-card" onClick={() => setModalItem(item)}>
-                <h3>{item.type}</h3>
-                <p>{new Date(item.analysis_date).toLocaleDateString('ru-RU')} — {item.value} {item.unit}</p>
-                <div className="record-card-actions" onClick={(e) => e.stopPropagation()}>
-                  <button type="button" className="btn btn-secondary" onClick={() => {
-                    setEditingId(item.id);
-                    setActiveRecordId(item.id);
-                    setForm({
-                      type: item.type,
-                      analysis_date: item.analysis_date,
-                      unit: item.unit,
-                      value: item.value,
-                      notes: item.notes || '',
-                    });
-                    setMode('single');
-                    window.scrollTo({ top: 0, behavior: 'smooth' });
-                  }}>
-                    Изменить
-                  </button>
-                </div>
+            {listItems.map((item) => (
+              <article
+                key={item.is_panel_group ? item.id : item.id}
+                className="record-card"
+                onClick={() => openViewModal(item)}
+              >
+                {item.is_panel_group ? (
+                  <>
+                    <h3>{item.panel_name} ({item.items.length})</h3>
+                    <p>{new Date(item.analysis_date).toLocaleDateString('ru-RU')}</p>
+                  </>
+                ) : (
+                  <>
+                    <h3>{item.type}</h3>
+                    <p>{new Date(item.analysis_date).toLocaleDateString('ru-RU')} — {item.value} {item.unit}</p>
+                  </>
+                )}
               </article>
             ))}
           </div>
@@ -477,12 +591,118 @@ const Analysis = () => {
         <div className="modal-backdrop" onClick={() => setModalItem(null)}>
           <div className="modal-card modal-card--wide" onClick={(e) => e.stopPropagation()}>
             <div className="modal-header">
-              <div className="modal-title">{modalItem.type}</div>
+              <div className="modal-title">
+                {modalItem.is_panel_group ? modalItem.panel_name : modalItem.type}
+              </div>
               <button type="button" className="modal-close" onClick={() => setModalItem(null)}>×</button>
             </div>
             <div className="modal-body">
-              <p>{modalItem.value} {modalItem.unit} · {new Date(modalItem.analysis_date).toLocaleDateString('ru-RU')}</p>
-              <Attachments recordType="analyses" recordId={modalItem.id} />
+              {modalMode === 'view' ? (
+                <>
+                  <p><strong>Дата:</strong> {new Date(modalItem.analysis_date).toLocaleDateString('ru-RU')}</p>
+                  {modalItem.is_panel_group ? (
+                    <ul className="panel-items-list">
+                      {modalItem.items.map((it) => (
+                        <li key={it.id}><strong>{it.type}:</strong> {it.value} {it.unit}</li>
+                      ))}
+                    </ul>
+                  ) : (
+                    <p>{modalItem.value} {modalItem.unit}</p>
+                  )}
+                  {modalItem.is_panel_group ? (
+                    <Attachments batchId={modalItem.batch_id} />
+                  ) : (
+                    <Attachments recordType="analyses" recordId={modalItem.id} />
+                  )}
+                  <div className="modal-actions">
+                    <button type="button" className="btn-edit" onClick={() => openEditModal(modalItem)}>Редактировать</button>
+                    <button type="button" onClick={() => setModalItem(null)}>Закрыть</button>
+                    <button type="button" className="btn-delete" onClick={deleteModalItem}>Удалить</button>
+                  </div>
+                </>
+              ) : (
+                <form onSubmit={(e) => { e.preventDefault(); saveModalEdit(); }}>
+                  {modalItem.is_panel_group ? (
+                    <>
+                      <label>
+                        Дата комплекса
+                        <input
+                          type="date"
+                          value={editForm.analysis_date}
+                          onChange={(e) => setEditForm({ ...editForm, analysis_date: e.target.value })}
+                          required
+                        />
+                      </label>
+                      <div className="panel-grid">
+                        {editPanelRows.map((row, idx) => (
+                          <div key={row.id} className="panel-row">
+                            <strong>{row.type}</strong>
+                            <input
+                              value={row.value}
+                              onChange={(e) => {
+                                const next = [...editPanelRows];
+                                next[idx] = { ...row, value: e.target.value };
+                                setEditPanelRows(next);
+                              }}
+                              required
+                            />
+                            <span className="unit-tag">{row.unit}</span>
+                          </div>
+                        ))}
+                      </div>
+                      <Attachments batchId={modalItem.batch_id} />
+                    </>
+                  ) : (
+                    <>
+                      <div className="form-grid">
+                        <label>
+                          Из справочника
+                          <select value={editForm.type} onChange={(e) => {
+                            const item = catalog.find((c) => c.name === e.target.value);
+                            setEditForm({
+                              ...editForm,
+                              type: e.target.value,
+                              unit: item?.default_unit || editForm.unit,
+                            });
+                          }}>
+                            <option value="">—</option>
+                            {catalog.map((c) => (
+                              <option key={c.id} value={c.name}>{c.name}</option>
+                            ))}
+                          </select>
+                        </label>
+                        {!editCatalogSelected && (
+                          <label>
+                            Или название
+                            <input
+                              value={editForm.type}
+                              onChange={(e) => setEditForm({ ...editForm, type: e.target.value })}
+                              required
+                            />
+                          </label>
+                        )}
+                        <label>
+                          Дата
+                          <input type="date" value={editForm.analysis_date} onChange={(e) => setEditForm({ ...editForm, analysis_date: e.target.value })} required />
+                        </label>
+                        <label>
+                          Значение
+                          <input value={editForm.value} onChange={(e) => setEditForm({ ...editForm, value: e.target.value })} required />
+                        </label>
+                        <label>
+                          Единица
+                          <input value={editForm.unit} onChange={(e) => setEditForm({ ...editForm, unit: e.target.value })} required />
+                        </label>
+                      </div>
+                      <Attachments recordType="analyses" recordId={modalItem.id} />
+                    </>
+                  )}
+                  <div className="modal-actions">
+                    <button type="submit" className="btn-primary" disabled={loading}>Сохранить</button>
+                    <button type="button" onClick={() => setModalMode('view')}>Отмена</button>
+                  </div>
+                </form>
+              )}
             </div>
           </div>
         </div>

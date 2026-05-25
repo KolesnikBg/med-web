@@ -1,4 +1,5 @@
 import os
+import re
 from datetime import datetime, timedelta
 
 import bcrypt
@@ -191,8 +192,18 @@ def login():
     user = cursor.fetchone()
     conn.close()
 
-    if not user or not bcrypt.checkpw(password.encode(), user['password_hash'].encode()):
-        return jsonify({'success': False, 'message': 'Неверные учётные данные'}), 401
+    if not user:
+        return jsonify({
+            'success': False,
+            'message': 'Пользователь с такой почтой не найден',
+            'error_code': 'email_not_found',
+        }), 401
+    if not bcrypt.checkpw(password.encode(), user['password_hash'].encode()):
+        return jsonify({
+            'success': False,
+            'message': 'Неверный пароль',
+            'error_code': 'wrong_password',
+        }), 401
 
     if not user['email_verified']:
         return jsonify({
@@ -285,19 +296,24 @@ def forgot_password():
     cursor = conn.cursor()
     cursor.execute('SELECT id FROM users WHERE email = ?', (email,))
     user = cursor.fetchone()
-    dev_code = None
-    if user:
-        code = generate_code()
-        dev_code = code if os.getenv('MAIL_MODE', 'console') == 'console' else None
-        cursor.execute('''
-            UPDATE users SET reset_code = ?, reset_expires = ? WHERE id = ?
-        ''', (code, code_expires(60), user['id']))
-        conn.commit()
-        send_password_reset(email, code)
+    if not user:
+        conn.close()
+        return jsonify({
+            'success': False,
+            'message': 'Пользователь с такой почтой не зарегистрирован',
+            'email_not_found': True,
+        }), 404
+    code = generate_code()
+    dev_code = code if os.getenv('MAIL_MODE', 'console') == 'console' else None
+    cursor.execute('''
+        UPDATE users SET reset_code = ?, reset_expires = ? WHERE id = ?
+    ''', (code, code_expires(60), user['id']))
+    conn.commit()
     conn.close()
+    send_password_reset(email, code)
     return jsonify({
         'success': True,
-        'message': 'Если email зарегистрирован, код отправлен',
+        'message': 'Код отправлен на почту',
         'dev_code': dev_code,
     })
 
@@ -308,8 +324,12 @@ def reset_password():
     email = (data.get('email') or '').strip().lower()
     code = (data.get('code') or '').strip()
     new_password = data.get('new_password', '')
-    if not all([email, code, new_password]) or len(new_password) < 6:
-        return jsonify({'success': False, 'message': 'Заполните все поля (пароль от 6 символов)'}), 400
+    if not all([email, code, new_password]):
+        return jsonify({'success': False, 'message': 'Заполните все поля'}), 400
+    if len(new_password) < 6:
+        return jsonify({'success': False, 'message': 'Пароль — минимум 6 символов'}), 400
+    if not re.search(r'[a-zA-Z]', new_password) or not re.search(r'\d', new_password):
+        return jsonify({'success': False, 'message': 'Пароль должен содержать буквы и цифры'}), 400
 
     conn = get_db()
     cursor = conn.cursor()
@@ -508,6 +528,7 @@ def get_appointments():
     user_id = int(get_jwt_identity())
     doctor_id = request.args.get('doctor_id', type=int)
     doctor = request.args.get('doctor', '').strip()
+    search = request.args.get('search', '').strip()
     date_from = request.args.get('date_from', '').strip()
     date_to = request.args.get('date_to', '').strip()
     conn = get_db()
@@ -520,6 +541,10 @@ def get_appointments():
     elif doctor:
         q += ' AND a.type = ?'
         params.append(doctor)
+    if search:
+        like = f'%{search}%'
+        q += ' AND (a.type LIKE ? OR a.description LIKE ? OR a.diagnosis LIKE ? OR d.name LIKE ?)'
+        params.extend([like, like, like, like])
     if date_from:
         q += ' AND a.appointment_date >= ?'
         params.append(date_from)
@@ -1217,8 +1242,8 @@ def get_calendar_events():
                 'title': f'🧪 {a["type"]}: {a["value"]} {a["unit"]}',
                 'start': a['analysis_date'],
                 'className': 'event-analysis',
-                'backgroundColor': '#8b5cf6',
-                'borderColor': '#7c3aed',
+                'backgroundColor': '#ef4444',
+                'borderColor': '#dc2626',
                 'extendedProps': {
                     'type': 'Анализ',
                     'description': a['notes'] or '',
@@ -1241,8 +1266,8 @@ def get_calendar_events():
                 'title': f'🧪 {panel_name} ({len(items)})',
                 'start': date,
                 'className': 'event-analysis event-panel-group',
-                'backgroundColor': '#7c3aed',
-                'borderColor': '#5b21b6',
+                'backgroundColor': '#dc2626',
+                'borderColor': '#b91c1c',
                 'extendedProps': {
                     'type': 'Комплекс анализов',
                     'description': summary,

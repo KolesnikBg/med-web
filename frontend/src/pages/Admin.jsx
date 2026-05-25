@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import api from '../services/api';
 
 const TABS = [
@@ -35,6 +35,41 @@ const Admin = () => {
     age_years: '',
     description: '',
   });
+  const [doctorSearch, setDoctorSearch] = useState('');
+  const [catalogSearch, setCatalogSearch] = useState('');
+  const [vaccineSearch, setVaccineSearch] = useState('');
+  const [scheduleSearch, setScheduleSearch] = useState('');
+
+  const filteredDoctors = useMemo(() => {
+    const q = doctorSearch.trim().toLowerCase();
+    if (!q) return doctors;
+    return doctors.filter((d) => d.name.toLowerCase().includes(q));
+  }, [doctors, doctorSearch]);
+
+  const filteredCatalog = useMemo(() => {
+    const q = catalogSearch.trim().toLowerCase();
+    if (!q) return catalog;
+    return catalog.filter((c) =>
+      c.name.toLowerCase().includes(q) || (c.default_unit || '').toLowerCase().includes(q)
+    );
+  }, [catalog, catalogSearch]);
+
+  const filteredVaccines = useMemo(() => {
+    const q = vaccineSearch.trim().toLowerCase();
+    if (!q) return vaccines;
+    return vaccines.filter((v) =>
+      v.name.toLowerCase().includes(q) || (v.description || '').toLowerCase().includes(q)
+    );
+  }, [vaccines, vaccineSearch]);
+
+  const filteredSchedules = useMemo(() => {
+    const q = scheduleSearch.trim().toLowerCase();
+    if (!q) return schedules;
+    return schedules.filter((s) =>
+      (s.vaccine_name || '').toLowerCase().includes(q) ||
+      (s.description || '').toLowerCase().includes(q)
+    );
+  }, [schedules, scheduleSearch]);
 
   const load = async () => {
     setLoading(true);
@@ -120,6 +155,10 @@ const Admin = () => {
 
       {tab === 'doctors' && (
         <section className="card">
+          <label className="admin-search">
+            Поиск по врачам
+            <input value={doctorSearch} onChange={(e) => setDoctorSearch(e.target.value)} placeholder="Имя, специальность..." />
+          </label>
           <form className="form-inline" onSubmit={async (e) => {
             e.preventDefault();
             await api.adminCreateDoctor({ name: doctorForm.name });
@@ -130,7 +169,7 @@ const Admin = () => {
             <button type="submit" className="btn btn-primary">Добавить</button>
           </form>
           <ul className="simple-list">
-            {doctors.map((d) => (
+            {filteredDoctors.map((d) => (
               <li key={d.id}>
                 {d.name}
                 <button type="button" className="btn-link" onClick={async () => { await api.adminDeleteDoctor(d.id); load(); }}>Удалить</button>
@@ -142,6 +181,10 @@ const Admin = () => {
 
       {tab === 'catalog' && (
         <section className="card">
+          <label className="admin-search">
+            Поиск по анализам
+            <input value={catalogSearch} onChange={(e) => setCatalogSearch(e.target.value)} placeholder="Название, единица..." />
+          </label>
           <form className="form-inline" onSubmit={async (e) => {
             e.preventDefault();
             await api.adminCreateCatalogItem(catalogForm);
@@ -153,7 +196,7 @@ const Admin = () => {
             <button type="submit" className="btn btn-primary">В справочник</button>
           </form>
           <ul className="simple-list">
-            {catalog.map((c) => (
+            {filteredCatalog.map((c) => (
               <li key={c.id}>{c.name} — {c.default_unit || '—'}
                 <button type="button" className="btn-link" onClick={async () => { await api.adminDeleteCatalogItem(c.id); load(); }}>Скрыть</button>
               </li>
@@ -286,6 +329,10 @@ const Admin = () => {
 
       {tab === 'vaccines' && (
         <section className="card">
+          <label className="admin-search">
+            Поиск по прививкам
+            <input value={vaccineSearch} onChange={(e) => setVaccineSearch(e.target.value)} placeholder="Название..." />
+          </label>
           <form className="form-inline" onSubmit={async (e) => {
             e.preventDefault();
             await api.adminCreateVaccine(vacForm);
@@ -301,7 +348,7 @@ const Admin = () => {
             <button type="submit" className="btn btn-primary">Добавить</button>
           </form>
           <ul className="simple-list">
-            {vaccines.map((v) => (
+            {filteredVaccines.map((v) => (
               <li key={v.id}>{v.name}
                 <button type="button" className="btn-link" onClick={async () => { await api.adminDeleteVaccine(v.id); load(); }}>Удалить</button>
               </li>
@@ -312,6 +359,10 @@ const Admin = () => {
 
       {tab === 'schedules' && (
         <section className="card">
+          <label className="admin-search">
+            Поиск по периодизации
+            <input value={scheduleSearch} onChange={(e) => setScheduleSearch(e.target.value)} placeholder="Прививка, описание..." />
+          </label>
           <form className="form-grid" onSubmit={async (e) => {
             e.preventDefault();
             await api.adminCreateVaccineSchedule({
@@ -359,7 +410,7 @@ const Admin = () => {
               <tr><th>Прививка</th><th>Тип</th><th>Параметр</th><th></th></tr>
             </thead>
             <tbody>
-              {schedules.map((s) => (
+              {filteredSchedules.map((s) => (
                 <tr key={s.id}>
                   <td>{s.vaccine_name}</td>
                   <td>{s.schedule_type === 'interval' ? 'Интервал' : 'Возраст'}</td>

@@ -15,28 +15,24 @@
   display: flex;
   justify-content: space-between;
   align-items: center;
+  gap: 12px;
 }
 
-.logo {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  cursor: pointer;
-  font-weight: bold;
+.nav-burger {
+  display: none;
+  background: rgba(255,255,255,0.15);
+  border: none;
+  color: white;
   font-size: 1.5rem;
-}
-
-.logo-icon {
-  font-size: 2rem;
-}
-
-.logo-text {
-  font-size: 1.2rem;
+  width: 44px;
+  height: 44px;
+  border-radius: 8px;
+  cursor: pointer;
 }
 
 .nav {
   display: flex;
-  gap: 20px;
+  gap: 12px;
   align-items: center;
 }
 
@@ -68,23 +64,121 @@
 
 .user-info {
   display: flex;
-  gap: 20px;
+  gap: 12px;
   align-items: center;
 }
 
-/* Адаптивность */
+.user-info__name {
+  max-width: 140px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* Полноэкранное меню на мобильных */
+.nav-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 1100;
+  display: flex;
+}
+
+.nav-overlay__backdrop {
+  position: absolute;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.5);
+}
+
+.nav-mobile {
+  position: relative;
+  z-index: 1;
+  width: 100%;
+  max-width: 100%;
+  height: 100%;
+  background: linear-gradient(160deg, #667eea 0%, #764ba2 100%);
+  display: flex;
+  flex-direction: column;
+  padding: env(safe-area-inset-top, 16px) 20px env(safe-area-inset-bottom, 24px);
+  animation: navSlideIn 0.25s ease;
+}
+
+.nav-mobile__head {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 24px;
+}
+
+.nav-mobile__user {
+  font-size: 1.25rem;
+  font-weight: 600;
+}
+
+.nav-mobile__close {
+  background: rgba(255,255,255,0.2);
+  border: none;
+  color: white;
+  width: 48px;
+  height: 48px;
+  border-radius: 50%;
+  font-size: 28px;
+  cursor: pointer;
+  line-height: 1;
+}
+
+.nav-mobile__links {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.nav-link--mobile {
+  font-size: 1.25rem;
+  padding: 16px 20px;
+  border-radius: 12px;
+  background: rgba(255,255,255,0.08);
+}
+
+.nav-mobile__logout {
+  margin-top: auto;
+  width: 100%;
+  padding: 16px;
+  font-size: 1.1rem;
+  border: none;
+  border-radius: 12px;
+  background: #ff4757;
+  color: white;
+  cursor: pointer;
+}
+
+@keyframes navSlideIn {
+  from { transform: translateX(-100%); opacity: 0.8; }
+  to { transform: translateX(0); opacity: 1; }
+}
+
 @media (max-width: 768px) {
-  .header-container {
-    flex-direction: column;
-    gap: 15px;
-  }
-  
-  .nav {
-    flex-wrap: wrap;
+  .nav-burger {
+    display: flex;
+    align-items: center;
     justify-content: center;
   }
-  
-  .logo-text {
-    font-size: 1rem;
+
+  .nav--desktop {
+    display: none;
+  }
+
+  .user-info__name {
+    display: none;
+  }
+
+  .header-container {
+    padding: 0 12px;
+  }
+}
+
+@media (min-width: 769px) {
+  .nav-overlay {
+    display: none !important;
   }
 }

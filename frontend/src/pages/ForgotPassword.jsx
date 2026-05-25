@@ -21,7 +21,11 @@ const ForgotPassword = () => {
         navigate('/reset-password', { state: { email } });
       }, 1500);
     } catch (err) {
-      setError(err.message);
+      if (err.payload?.email_not_found) {
+        setError('Пользователь с такой почтой не зарегистрирован');
+      } else {
+        setError(err.message);
+      }
     }
   };
 

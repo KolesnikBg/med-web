@@ -49,6 +49,16 @@ export const computeRegistrationErrors = (formData) => {
   return errors;
 };
 
+export const validatePassword = (password) => {
+  if (!password || password.length < 6) {
+    return 'Пароль — минимум 6 символов';
+  }
+  if (!/(?=.*[a-zA-Z])(?=.*\d)/.test(password)) {
+    return 'Нужны буквы и цифры';
+  }
+  return '';
+};
+
 export const useValidation = (formData) => {
   const validate = () => {
     const errors = computeRegistrationErrors(formData);

@@ -1,23 +1,38 @@
 import React, { useState } from 'react';
 import { Link, useNavigate, useLocation } from 'react-router-dom';
 import api from '../services/api';
+import { validatePassword } from '../hooks/useValidation';
 import '../styles/register.css';
 
 const ResetPassword = () => {
   const location = useLocation();
   const navigate = useNavigate();
-  const [email, setEmail] = useState(location.state?.email || '');
+  const emailFromState = location.state?.email || '';
   const [code, setCode] = useState('');
   const [newPassword, setNewPassword] = useState('');
+  const [confirmPassword, setConfirmPassword] = useState('');
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
 
   const handleSubmit = async (e) => {
     e.preventDefault();
     setError('');
+    const pwdErr = validatePassword(newPassword);
+    if (pwdErr) {
+      setError(pwdErr);
+      return;
+    }
+    if (newPassword !== confirmPassword) {
+      setError('Пароли не совпадают');
+      return;
+    }
+    if (!emailFromState) {
+      setError('Сначала запросите код на странице сброса пароля');
+      return;
+    }
     setLoading(true);
     try {
-      await api.resetPassword(email, code, newPassword);
+      await api.resetPassword(emailFromState, code, newPassword);
       navigate('/login');
     } catch (err) {
       setError(err.message);
@@ -25,6 +40,17 @@ const ResetPassword = () => {
       setLoading(false);
     }
   };
+
+  if (!emailFromState) {
+    return (
+      <div className="auth-container">
+        <div className="auth-card">
+          <h2>Новый пароль</h2>
+          <p>Сначала укажите email на странице <Link to="/forgot-password">сброса пароля</Link>.</p>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="auth-container">
@@ -34,7 +60,7 @@ const ResetPassword = () => {
         <form onSubmit={handleSubmit}>
           <div className="form-group">
             <h3>Email</h3>
-            <input type="email" value={email} onChange={(e) => setEmail(e.target.value)} required />
+            <input type="email" value={emailFromState} readOnly disabled className="input-readonly" />
           </div>
           <div className="form-group">
             <h3>Код из письма</h3>
@@ -46,7 +72,16 @@ const ResetPassword = () => {
               type="password"
               value={newPassword}
               onChange={(e) => setNewPassword(e.target.value)}
-              minLength={6}
+              required
+            />
+            <small className="field-hint">Минимум 6 символов, буквы и цифры</small>
+          </div>
+          <div className="form-group">
+            <h3>Подтверждение</h3>
+            <input
+              type="password"
+              value={confirmPassword}
+              onChange={(e) => setConfirmPassword(e.target.value)}
               required
             />
           </div>

@@ -19,23 +19,32 @@
 
 .calendar-header h2 {
   margin: 0;
-  font-size: 18px;
+  font-size: clamp(1rem, 4vw, 1.125rem);
   color: #1f2937;
   font-weight: 600;
+  line-height: 1.3;
+  letter-spacing: -0.02em;
 }
 
 .calendar-legend {
   display: flex;
-  gap: 10px;
-  font-size: 12px;
-  color: #6b7280;
+  gap: clamp(6px, 2vw, 12px);
+  font-size: clamp(11px, 2.8vw, 13px);
+  color: #4b5563;
   flex-wrap: wrap;
+  align-items: center;
 }
 
 .legend-item {
-  display: flex;
+  display: inline-flex;
   align-items: center;
-  gap: 4px;
+  gap: 5px;
+  white-space: nowrap;
+  font-weight: 500;
+}
+
+.legend-item .dot {
+  flex-shrink: 0;
 }
 
 .dot {
@@ -45,8 +54,19 @@
   display: inline-block;
 }
 .dot.appointment { background: #3b82f6; }
-.dot.analysis { background: #8b5cf6; }
+/* Цвет анализов в легенде и на календаре — см. также backend/app.py get_calendar_events */
+.dot.analysis { background: #ef4444; }
 .dot.vaccine { background: #10b981; }
+
+.fc .fc-event.event-analysis:not(.event-panel-group) {
+  background-color: #ef4444 !important;
+  border-color: #dc2626 !important;
+}
+
+.fc .fc-event.event-panel-group {
+  background-color: #dc2626 !important;
+  border-color: #b91c1c !important;
+}
 
 /* === FULLCALENDAR — БАЗОВЫЕ СТИЛИ === */
 .fc {
@@ -316,7 +336,22 @@
 }
 
 .fc .fc-event.event-panel-group {
-  border-left: 3px solid #5b21b6 !important;
+  border-left: 3px solid #b91c1c !important;
+}
+
+/* Подпись кнопки «Год» (multiMonthYear) */
+.fc .fc-multiMonthYear-button {
+  text-transform: none !important;
+}
+
+.fc .fc-multiMonthYear-button .fc-button-label {
+  font-size: 0;
+  line-height: 1;
+}
+
+.fc .fc-multiMonthYear-button .fc-button-label::after {
+  content: 'Год';
+  font-size: 12px;
 }
 
 /* === АНИМАЦИИ === */
@@ -338,15 +373,29 @@
   
   .calendar-header {
     flex-direction: column;
-    align-items: flex-start;
-    gap: 8px;
+    align-items: stretch;
+    gap: 10px;
+    padding: 4px 2px 8px;
   }
-  
-  .calendar-header h2 { font-size: 16px; }
-  
+
+  .calendar-header h2 {
+    font-size: 1.05rem;
+    text-align: center;
+  }
+
   .calendar-legend {
     width: 100%;
-    justify-content: space-around;
+    justify-content: center;
+    gap: 8px 14px;
+    font-size: 12px;
+    line-height: 1.4;
+  }
+
+  .legend-item {
+    padding: 4px 8px;
+    background: #f9fafb;
+    border-radius: 999px;
+    border: 1px solid #e5e7eb;
   }
   
   /* Toolbar: кнопки в столбик */
@@ -426,10 +475,14 @@
     margin-top: 8px;
   }
   
-  /* Кнопки на всю ширину */
+  /* Порядок: Редактировать → Закрыть → Удалить */
   .modal-actions {
-    flex-direction: column-reverse;
+    flex-direction: column;
     gap: 10px;
+  }
+
+  .modal-actions--view {
+    flex-direction: column;
   }
   
   .modal-actions button {

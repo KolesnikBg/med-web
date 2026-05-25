@@ -146,6 +146,94 @@ body {
   font-weight: 600;
 }
 
+.modal-actions {
+  display: flex;
+  gap: 8px;
+  justify-content: flex-end;
+  flex-wrap: wrap;
+  padding-top: 16px;
+  margin-top: 16px;
+  border-top: 1px solid #e5e7eb;
+}
+
+.modal-actions button {
+  padding: 10px 16px;
+  border: none;
+  border-radius: 8px;
+  cursor: pointer;
+  font-size: 14px;
+  font-weight: 500;
+  min-height: 44px;
+}
+
+.modal-actions .btn-edit { background: #6366f1; color: #fff; }
+.modal-actions .btn-delete { background: #ef4444; color: #fff; }
+.modal-actions .btn-primary { background: #3b82f6; color: #fff; }
+.modal-actions button:not(.btn-edit):not(.btn-delete):not(.btn-primary) {
+  background: #e5e7eb;
+  color: #374151;
+}
+
+@media (max-width: 480px) {
+  .modal-backdrop {
+    padding: 0;
+    align-items: flex-end;
+  }
+  .modal-card {
+    max-width: 100%;
+    border-radius: 20px 20px 0 0;
+    max-height: 92vh;
+    overflow-y: auto;
+  }
+  .modal-actions {
+    flex-direction: column;
+  }
+  .modal-actions button {
+    width: 100%;
+  }
+}
+
+.admin-search {
+  display: block;
+  margin-bottom: 12px;
+  font-size: 14px;
+  font-weight: 500;
+}
+
+.admin-search input {
+  display: block;
+  width: 100%;
+  margin-top: 6px;
+  padding: 10px 12px;
+  border: 1px solid #d1d5db;
+  border-radius: 8px;
+  box-sizing: border-box;
+}
+
+.panel-items-list {
+  margin: 8px 0 12px;
+  padding-left: 1.1rem;
+  font-size: 14px;
+}
+
+.panel-items-list li {
+  margin: 4px 0;
+}
+
+.input-readonly,
+input:disabled {
+  background: #f3f4f6;
+  color: #6b7280;
+  cursor: not-allowed;
+}
+
+.field-hint {
+  display: block;
+  margin-top: 4px;
+  font-size: 12px;
+  color: #6b7280;
+}
+
 .data-table {
   width: 100%;
   border-collapse: collapse;

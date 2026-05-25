@@ -48,7 +48,13 @@ const Login = ({ onLogin }) => {
         navigate('/verify-email', { state: { email } });
         return;
       }
-      setError(err.message || 'Ошибка входа');
+      if (err.payload?.error_code === 'email_not_found') {
+        setError('Пользователь с такой почтой не найден');
+      } else if (err.payload?.error_code === 'wrong_password') {
+        setError('Неверный пароль');
+      } else {
+        setError(err.message || 'Ошибка входа');
+      }
     } finally {
       setLoading(false);
     }
