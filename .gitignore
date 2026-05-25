@@ -6,3 +6,5 @@ backend/uploads
 backend/__pycache__/
 
 frontend/node_modules
+
+backend/.env
