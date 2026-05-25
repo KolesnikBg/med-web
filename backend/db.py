@@ -1,4 +1,5 @@
 import os
+import shutil
 import sqlite3
 import bcrypt
 
@@ -14,89 +15,115 @@ def get_db():
     return conn
 
 
+def build_name_from_parts(lastname='', first_name='', patronymic='', fallback=''):
+    """Склейка ФИО с формы регистрации."""
+    return ' '.join(p for p in (lastname, first_name, patronymic) if p) or fallback
+
+
 def _table_columns(cursor, table):
     cursor.execute(f'PRAGMA table_info({table})')
     return {row[1] for row in cursor.fetchall()}
 
 
+def _column_notnull(cursor, table, column):
+    cursor.execute(f'PRAGMA table_info({table})')
+    for row in cursor.fetchall():
+        if row[1] == column:
+            return bool(row[3])
+    return False
+
+
 def _add_column_if_missing(cursor, table, column, definition):
-    cursor.execute(
-        "SELECT name FROM sqlite_master WHERE type='table' AND name=?",
-        (table,),
-    )
-    if not cursor.fetchone():
-        return
-    cols = _table_columns(cursor, table)
-    if column not in cols:
+    if column not in _table_columns(cursor, table):
         cursor.execute(f'ALTER TABLE {table} ADD COLUMN {column} {definition}')
 
 
-def build_full_name_from_parts(lastname='', first_name='', patronymic='', fallback=''):
-    """Склейка ФИО — только для формы регистрации, в БД хранится одной строкой."""
-    return ' '.join(p for p in (lastname, first_name, patronymic) if p) or fallback
+def _migrate_schema(cursor):
+    """Добавить недостающие колонки и привести старые таблицы к актуальной схеме."""
+    if 'users' in _existing_tables(cursor):
+        for column, definition in (
+            ('role', "TEXT DEFAULT 'user'"),
+            ('email_verified', 'INTEGER DEFAULT 0'),
+            ('verification_code', 'TEXT'),
+            ('verification_expires', 'TEXT'),
+            ('reset_code', 'TEXT'),
+            ('reset_expires', 'TEXT'),
+            ('two_factor_enabled', 'INTEGER DEFAULT 0'),
+            ('two_fa_code', 'TEXT'),
+            ('two_fa_expires', 'TEXT'),
+        ):
+            _add_column_if_missing(cursor, 'users', column, definition)
+
+    if 'appointments' in _existing_tables(cursor):
+        _add_column_if_missing(cursor, 'appointments', 'doctor_id', 'INTEGER')
+
+    if 'analyses' in _existing_tables(cursor):
+        _add_column_if_missing(cursor, 'analyses', 'panel_id', 'INTEGER')
+        _add_column_if_missing(cursor, 'analyses', 'batch_id', 'TEXT')
+
+    if 'user_vaccinations' in _existing_tables(cursor):
+        _add_column_if_missing(cursor, 'user_vaccinations', 'custom_name', 'TEXT')
+
+    if 'attachments' in _existing_tables(cursor):
+        _migrate_attachments(cursor)
 
 
-def _migrate_users_full_name(cursor):
-    cols = _table_columns(cursor, 'users')
-    if 'full_name' not in cols:
-        return
-    if 'lastname' in cols or 'first_name' in cols or 'patronymic' in cols:
-        cursor.execute('''
-            UPDATE users SET full_name = TRIM(
-                COALESCE(NULLIF(full_name, ''),
-                    NULLIF(TRIM(
-                        COALESCE(lastname, '') || ' ' ||
-                        COALESCE(first_name, '') || ' ' ||
-                        COALESCE(patronymic, '')
-                    ), ''),
-                    name, '')
-            )
-            WHERE full_name IS NULL OR full_name = ''
-        ''')
-    elif 'name' in cols:
-        cursor.execute('''
-            UPDATE users SET full_name = name
-            WHERE (full_name IS NULL OR full_name = '') AND name IS NOT NULL AND name != ''
-        ''')
+def _existing_tables(cursor):
+    cursor.execute("SELECT name FROM sqlite_master WHERE type='table'")
+    return {row[0] for row in cursor.fetchall()}
 
 
-def insert_user_row(
-    cursor,
-    *,
-    full_name,
-    email,
-    password_hash,
-    sex,
-    birth_date,
-    role='user',
-    email_verified=0,
-    verification_code=None,
-    verification_expires=None,
-):
-    display = (full_name or '').strip() or email.split('@')[0]
-    row = {
-        'full_name': display,
-        'email': email,
-        'password_hash': password_hash,
-        'sex': sex,
-        'birth_date': birth_date,
-        'role': role,
-        'email_verified': email_verified,
-    }
-    cols = _table_columns(cursor, 'users')
-    if 'name' in cols:
-        row['name'] = display
-    if verification_code is not None:
-        row['verification_code'] = verification_code
-        row['verification_expires'] = verification_expires
-
-    keys = [k for k in row if k in cols]
-    placeholders = ', '.join('?' * len(keys))
-    cursor.execute(
-        f"INSERT INTO users ({', '.join(keys)}) VALUES ({placeholders})",
-        [row[k] for k in keys],
+def _migrate_attachments(cursor):
+    cols = _table_columns(cursor, 'attachments')
+    needs_rebuild = (
+        'draft_key' not in cols
+        or _column_notnull(cursor, 'attachments', 'record_type')
+        or _column_notnull(cursor, 'attachments', 'record_id')
     )
-    return cursor.lastrowid
+    if not needs_rebuild:
+        _add_column_if_missing(cursor, 'attachments', 'draft_key', 'TEXT')
+        _add_column_if_missing(cursor, 'attachments', 'batch_id', 'TEXT')
+        return
+
+    cursor.execute('''
+        CREATE TABLE attachments_new (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            user_id INTEGER NOT NULL,
+            record_type TEXT,
+            record_id INTEGER,
+            draft_key TEXT,
+            batch_id TEXT,
+            original_filename TEXT NOT NULL,
+            stored_filename TEXT NOT NULL,
+            mime_type TEXT,
+            size INTEGER NOT NULL,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            FOREIGN KEY (user_id) REFERENCES users (id) ON DELETE CASCADE
+        )
+    ''')
+    old_cols = _table_columns(cursor, 'attachments')
+    insert_cols = ['id', 'user_id', 'record_type', 'record_id', 'draft_key', 'batch_id']
+    insert_cols += [
+        'original_filename', 'stored_filename', 'mime_type', 'size', 'created_at',
+    ]
+    select_exprs = []
+    for col in ('id', 'user_id', 'record_type', 'record_id'):
+        select_exprs.append(col if col in old_cols else 'NULL')
+    select_exprs.append(
+        'draft_key' if 'draft_key' in old_cols else 'NULL',
+    )
+    select_exprs.append(
+        'batch_id' if 'batch_id' in old_cols else 'NULL',
+    )
+    for col in ('original_filename', 'stored_filename', 'mime_type', 'size', 'created_at'):
+        select_exprs.append(col if col in old_cols else 'NULL')
+
+    cursor.execute(f'''
+        INSERT INTO attachments_new ({', '.join(insert_cols)})
+        SELECT {', '.join(select_exprs)} FROM attachments
+    ''')
+    cursor.execute('DROP TABLE attachments')
+    cursor.execute('ALTER TABLE attachments_new RENAME TO attachments')
 
 
 def init_db():
@@ -106,36 +133,46 @@ def init_db():
     cursor.execute('''
         CREATE TABLE IF NOT EXISTS users (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
+            name TEXT NOT NULL,
             email TEXT UNIQUE NOT NULL,
             password_hash TEXT NOT NULL,
             sex TEXT NOT NULL,
             birth_date TEXT NOT NULL,
+            role TEXT DEFAULT 'user',
+            email_verified INTEGER DEFAULT 0,
+            verification_code TEXT,
+            verification_expires TEXT,
+            reset_code TEXT,
+            reset_expires TEXT,
+            two_factor_enabled INTEGER DEFAULT 0,
+            two_fa_code TEXT,
+            two_fa_expires TEXT,
             created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
         )
     ''')
 
-    _add_column_if_missing(cursor, 'users', 'full_name', 'TEXT')
-    _add_column_if_missing(cursor, 'users', 'name', 'TEXT')
-    _add_column_if_missing(cursor, 'users', 'role', "TEXT DEFAULT 'user'")
-    _add_column_if_missing(cursor, 'users', 'email_verified', 'INTEGER DEFAULT 0')
-    _add_column_if_missing(cursor, 'users', 'verification_code', 'TEXT')
-    _add_column_if_missing(cursor, 'users', 'verification_expires', 'TEXT')
-    _add_column_if_missing(cursor, 'users', 'reset_code', 'TEXT')
-    _add_column_if_missing(cursor, 'users', 'reset_expires', 'TEXT')
-    _add_column_if_missing(cursor, 'users', 'totp_secret', 'TEXT')
-    _add_column_if_missing(cursor, 'users', 'two_factor_enabled', 'INTEGER DEFAULT 0')
-    _migrate_users_full_name(cursor)
+    cursor.execute('''
+        CREATE TABLE IF NOT EXISTS doctors (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            name TEXT NOT NULL,
+            user_id INTEGER,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            FOREIGN KEY (user_id) REFERENCES users (id) ON DELETE CASCADE
+        )
+    ''')
 
     cursor.execute('''
         CREATE TABLE IF NOT EXISTS appointments (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             user_id INTEGER NOT NULL,
             type TEXT NOT NULL,
+            doctor_id INTEGER,
             description TEXT,
             appointment_date TEXT NOT NULL,
             diagnosis TEXT,
             created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-            FOREIGN KEY (user_id) REFERENCES users (id) ON DELETE CASCADE
+            FOREIGN KEY (user_id) REFERENCES users (id) ON DELETE CASCADE,
+            FOREIGN KEY (doctor_id) REFERENCES doctors (id) ON DELETE SET NULL
         )
     ''')
 
@@ -148,13 +185,12 @@ def init_db():
             unit TEXT NOT NULL,
             value TEXT NOT NULL,
             notes TEXT,
+            panel_id INTEGER,
+            batch_id TEXT,
             created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
             FOREIGN KEY (user_id) REFERENCES users (id) ON DELETE CASCADE
         )
     ''')
-
-    _add_column_if_missing(cursor, 'analyses', 'panel_id', 'INTEGER')
-    _add_column_if_missing(cursor, 'analyses', 'batch_id', 'TEXT')
 
     cursor.execute('''
         CREATE TABLE IF NOT EXISTS vaccines (
@@ -184,8 +220,10 @@ def init_db():
         CREATE TABLE IF NOT EXISTS attachments (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             user_id INTEGER NOT NULL,
-            record_type TEXT NOT NULL,
-            record_id INTEGER NOT NULL,
+            record_type TEXT,
+            record_id INTEGER,
+            draft_key TEXT,
+            batch_id TEXT,
             original_filename TEXT NOT NULL,
             stored_filename TEXT NOT NULL,
             mime_type TEXT,
@@ -195,8 +233,61 @@ def init_db():
         )
     ''')
 
-    cursor.execute('CREATE INDEX IF NOT EXISTS idx_attachments_record ON attachments(record_type, record_id)')
+    cursor.execute('''
+        CREATE TABLE IF NOT EXISTS analysis_catalog (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            name TEXT NOT NULL,
+            default_unit TEXT DEFAULT '',
+            user_id INTEGER,
+            is_active INTEGER DEFAULT 1,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            FOREIGN KEY (user_id) REFERENCES users (id) ON DELETE CASCADE
+        )
+    ''')
+
+    cursor.execute('''
+        CREATE TABLE IF NOT EXISTS analysis_panels (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            name TEXT NOT NULL,
+            description TEXT,
+            user_id INTEGER,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            FOREIGN KEY (user_id) REFERENCES users (id) ON DELETE CASCADE
+        )
+    ''')
+
+    cursor.execute('''
+        CREATE TABLE IF NOT EXISTS analysis_panel_items (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            panel_id INTEGER NOT NULL,
+            catalog_id INTEGER,
+            item_name TEXT NOT NULL,
+            default_unit TEXT DEFAULT '',
+            sort_order INTEGER DEFAULT 0,
+            FOREIGN KEY (panel_id) REFERENCES analysis_panels (id) ON DELETE CASCADE,
+            FOREIGN KEY (catalog_id) REFERENCES analysis_catalog (id) ON DELETE SET NULL
+        )
+    ''')
+
+    cursor.execute('''
+        CREATE TABLE IF NOT EXISTS vaccine_schedules (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            vaccine_id INTEGER NOT NULL,
+            schedule_type TEXT NOT NULL,
+            interval_years INTEGER,
+            age_years INTEGER,
+            description TEXT,
+            FOREIGN KEY (vaccine_id) REFERENCES vaccines (id) ON DELETE CASCADE
+        )
+    ''')
+
+    _migrate_schema(cursor)
+
+    cursor.execute('CREATE INDEX IF NOT EXISTS idx_attachments_record ON attachments(record_type, record_id)') 
+    cursor.execute('CREATE INDEX IF NOT EXISTS idx_attachments_draft ON attachments(user_id, draft_key)')
+    cursor.execute('CREATE INDEX IF NOT EXISTS idx_attachments_batch ON attachments(user_id, batch_id)')
     cursor.execute('CREATE INDEX IF NOT EXISTS idx_analyses_user_type ON analyses(user_id, type)')
+    cursor.execute('CREATE INDEX IF NOT EXISTS idx_analyses_batch ON analyses(user_id, batch_id)')
 
     cursor.execute('SELECT COUNT(*) FROM vaccines')
     if cursor.fetchone()[0] == 0:
@@ -221,8 +312,8 @@ def init_db():
                 (name, desc, cat),
             )
 
-    from reference import init_reference_tables
-    init_reference_tables(cursor)
+    from reference import seed_reference_data
+    seed_reference_data(cursor)
 
     _seed_user(cursor, 'demo@example.com', 'demo123', 'Пользователь Демо', verified=True)
     _seed_user(
@@ -230,46 +321,26 @@ def init_db():
         verified=True, role='admin',
     )
 
-    cursor.execute('''
-        UPDATE users SET email_verified = 1
-        WHERE email IN ('demo@example.com', 'admin@med.local')
-    ''')
-    cursor.execute("UPDATE users SET role = 'admin' WHERE email = 'admin@med.local'")
-    cursor.execute('''
-        UPDATE users SET full_name = 'Пользователь Демо'
-        WHERE email = 'demo@example.com' AND (full_name IS NULL OR full_name = '')
-    ''')
-    cursor.execute('''
-        UPDATE users SET full_name = 'Администратор Системы'
-        WHERE email = 'admin@med.local' AND (full_name IS NULL OR full_name = '')
-    ''')
-
     conn.commit()
     conn.close()
 
 
-def _seed_user(cursor, email, password, full_name, verified=False, role='user'):
+def _seed_user(cursor, email, password, name, verified=False, role='user'):
     cursor.execute('SELECT id FROM users WHERE email = ?', (email,))
     if cursor.fetchone():
-        cursor.execute(
-            "UPDATE users SET role = ?, email_verified = 1 WHERE email = ? AND role != 'admin'",
-            (role, email),
-        )
         if role == 'admin':
-            cursor.execute("UPDATE users SET role = 'admin' WHERE email = ?", (email,))
+            cursor.execute(
+                "UPDATE users SET role = 'admin', email_verified = 1 WHERE email = ?",
+                (email,),
+            )
         return
 
     pwd = bcrypt.hashpw(password.encode(), bcrypt.gensalt()).decode()
-    user_id = insert_user_row(
-        cursor,
-        full_name=full_name,
-        email=email,
-        password_hash=pwd,
-        sex='male',
-        birth_date='1990-01-01',
-        role=role,
-        email_verified=1 if verified else 0,
-    )
+    cursor.execute('''
+        INSERT INTO users (name, email, password_hash, sex, birth_date, role, email_verified)
+        VALUES (?, ?, ?, ?, ?, ?, ?)
+    ''', (name, email, pwd, 'male', '1990-01-01', role, 1 if verified else 0))
+    user_id = cursor.lastrowid
 
     if email == 'demo@example.com':
         cursor.execute('''
@@ -293,6 +364,26 @@ def _seed_user(cursor, email, password, full_name, verified=False, role='user'):
             ''', (user_id, vac[0], '2023-05-20', 'Без побочных эффектов'))
 
 
+def delete_user_account(user_id):
+    """Удалить пользователя, все записи (CASCADE) и файлы на диске."""
+    from utils import delete_stored_file
+
+    conn = get_db()
+    cursor = conn.cursor()
+    cursor.execute('SELECT stored_filename FROM attachments WHERE user_id = ?', (user_id,))
+    files = [r['stored_filename'] for r in cursor.fetchall()]
+    cursor.execute('DELETE FROM users WHERE id = ?', (user_id,))
+    deleted = cursor.rowcount
+    conn.commit()
+    conn.close()
+    for stored in files:
+        delete_stored_file(user_id, stored)
+    user_dir = os.path.join(UPLOAD_DIR, str(user_id))
+    if os.path.isdir(user_dir):
+        shutil.rmtree(user_dir, ignore_errors=True)
+    return deleted > 0
+
+
 def user_to_dict(row):
     if not row:
         return None
@@ -300,20 +391,9 @@ def user_to_dict(row):
     d['is_admin'] = d.get('role') == 'admin'
     d['two_factor_enabled'] = bool(d.get('two_factor_enabled'))
     d['email_verified'] = bool(d.get('email_verified'))
-
-    full = (d.get('full_name') or d.get('name') or '').strip()
-    if not full:
-        full = build_full_name_from_parts(
-            d.get('lastname') or '',
-            d.get('first_name') or '',
-            d.get('patronymic') or '',
-        )
-    d['full_name'] = full
-
     for key in (
         'password_hash', 'verification_code', 'verification_expires',
-        'reset_code', 'reset_expires', 'totp_secret', 'name',
-        'lastname', 'first_name', 'patronymic',
+        'reset_code', 'reset_expires', 'two_fa_code', 'two_fa_expires',
     ):
         d.pop(key, None)
     return d

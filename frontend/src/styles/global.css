@@ -462,6 +462,30 @@ body {
   border-radius: 12px;
 }
 
+.card--danger {
+  border: 1px solid #fecaca;
+  background: #fef2f2;
+}
+
+.success-message {
+  color: #059669;
+  margin-bottom: 12px;
+}
+
+.btn-delete {
+  background: #dc2626;
+  color: #fff;
+  border: none;
+  padding: 10px 16px;
+  border-radius: 8px;
+  cursor: pointer;
+  margin-top: 12px;
+}
+
+.btn-delete:hover {
+  background: #b91c1c;
+}
+
 .form-inline {
   display: flex;
   flex-wrap: wrap;

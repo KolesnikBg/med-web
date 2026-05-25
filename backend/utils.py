@@ -4,7 +4,6 @@ import uuid
 from datetime import datetime, timedelta
 from functools import wraps
 
-import pyotp
 from flask import jsonify
 from flask_jwt_extended import get_jwt_identity, verify_jwt_in_request
 from werkzeug.utils import secure_filename
@@ -14,8 +13,6 @@ from config import (
     ALLOWED_ATTACHMENT_MIMES,
     MAX_ATTACHMENT_BYTES,
     UPLOAD_DIR,
-    VERIFICATION_CODE_TTL_MINUTES,
-    RESET_TOKEN_TTL_MINUTES,
 )
 from db import get_db
 
@@ -37,6 +34,10 @@ def is_expired(iso_str):
         return datetime.utcnow() > datetime.fromisoformat(iso_str)
     except ValueError:
         return True
+
+
+def new_draft_key():
+    return str(uuid.uuid4())
 
 
 def admin_required(fn):
@@ -76,6 +77,14 @@ def owns_record(cursor, user_id, record_type, record_id):
     return cursor.fetchone() is not None
 
 
+def owns_batch(cursor, user_id, batch_id):
+    cursor.execute(
+        'SELECT id FROM analyses WHERE user_id = ? AND batch_id = ? LIMIT 1',
+        (user_id, batch_id),
+    )
+    return cursor.fetchone() is not None
+
+
 def validate_upload(file):
     if not file or not file.filename:
         return 'Файл не выбран'
@@ -111,16 +120,23 @@ def delete_stored_file(user_id, stored_filename):
         os.remove(path)
 
 
-def create_totp_secret():
-    return pyotp.random_base32()
+def link_draft_attachments(cursor, user_id, draft_key, record_type, record_id):
+    if not draft_key:
+        return 0
+    cursor.execute('''
+        UPDATE attachments
+        SET record_type = ?, record_id = ?, draft_key = NULL
+        WHERE user_id = ? AND draft_key = ?
+    ''', (record_type, record_id, user_id, draft_key))
+    return cursor.rowcount
 
 
-def verify_totp(secret, code):
-    if not secret or not code:
-        return False
-    totp = pyotp.TOTP(secret)
-    return totp.verify(str(code).strip(), valid_window=1)
-
-
-def get_totp_uri(secret, email):
-    return pyotp.TOTP(secret).provisioning_uri(name=email, issuer_name='МедДневник')
+def link_draft_to_batch(cursor, user_id, draft_key, batch_id):
+    if not draft_key or not batch_id:
+        return 0
+    cursor.execute('''
+        UPDATE attachments
+        SET batch_id = ?, draft_key = NULL
+        WHERE user_id = ? AND draft_key = ?
+    ''', (batch_id, user_id, draft_key))
+    return cursor.rowcount

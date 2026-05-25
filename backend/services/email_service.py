@@ -52,3 +52,13 @@ def send_password_reset(email: str, code: str) -> bool:
         f'Если вы не запрашивали сброс, проигнорируйте это письмо.\n'
     )
     return send_email(email, 'Сброс пароля — МедДневник', body)
+
+
+def send_2fa_code(email: str, code: str) -> bool:
+    body = (
+        f'Здравствуйте!\n\n'
+        f'Код для входа в МедДневник: {code}\n\n'
+        f'Код действует 10 минут.\n'
+        f'Если вы не входили в аккаунт, смените пароль.\n'
+    )
+    return send_email(email, 'Код входа — МедДневник', body)

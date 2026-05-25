@@ -4,18 +4,32 @@ import api from '../services/api';
 const MAX_SIZE = 10 * 1024 * 1024;
 const IMAGE_EXT = /\.(jpe?g|png|gif|webp|bmp|heic)$/i;
 
-const Attachments = ({ recordType, recordId, disabled = false, compact = false }) => {
+const Attachments = ({
+  recordType,
+  recordId,
+  draftKey,
+  batchId,
+  disabled = false,
+  compact = false,
+}) => {
   const [items, setItems] = useState([]);
   const [previews, setPreviews] = useState({});
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
 
+  const canAttach = Boolean(recordId || draftKey || batchId);
+
   const load = async () => {
-    if (!recordId) return;
+    if (!canAttach) return;
     setLoading(true);
     setError('');
     try {
-      const data = await api.getAttachments(recordType, recordId);
+      const data = await api.getAttachments({
+        recordType,
+        recordId,
+        draftKey,
+        batchId,
+      });
       setItems(data.attachments || []);
     } catch (err) {
       setError(err.message);
@@ -29,10 +43,10 @@ const Attachments = ({ recordType, recordId, disabled = false, compact = false }
     return () => {
       Object.values(previews).forEach((url) => URL.revokeObjectURL(url));
     };
-  }, [recordType, recordId]);
+  }, [recordType, recordId, draftKey, batchId]);
 
   useEffect(() => {
-    if (!recordId || !items.length) return;
+    if (!canAttach || !items.length) return;
     let cancelled = false;
     const loadPreviews = async () => {
       const next = {};
@@ -49,7 +63,7 @@ const Attachments = ({ recordType, recordId, disabled = false, compact = false }
     };
     loadPreviews();
     return () => { cancelled = true; };
-  }, [items, recordId]);
+  }, [items, canAttach]);
 
   const handleUpload = async (e) => {
     const file = e.target.files?.[0];
@@ -61,7 +75,13 @@ const Attachments = ({ recordType, recordId, disabled = false, compact = false }
     }
     setError('');
     try {
-      await api.uploadAttachment(recordType, recordId, file);
+      await api.uploadAttachment({
+        recordType,
+        recordId,
+        draftKey,
+        batchId,
+        file,
+      });
       await load();
     } catch (err) {
       setError(err.message);
@@ -79,12 +99,8 @@ const Attachments = ({ recordType, recordId, disabled = false, compact = false }
     }
   };
 
-  if (!recordId) {
-    return (
-      <div className="attachments-hint">
-        Сохраните запись, чтобы прикрепить фото или файлы (до 10 МБ).
-      </div>
-    );
+  if (!canAttach) {
+    return null;
   }
 
   return (
@@ -142,7 +158,7 @@ const Attachments = ({ recordType, recordId, disabled = false, compact = false }
       )}
 
       {!items.length && !loading && (
-        <p className="empty-text">Нет вложений. Нажмите кнопку выше.</p>
+        <p className="empty-text">Нет вложений. Можно прикрепить до сохранения.</p>
       )}
     </div>
   );

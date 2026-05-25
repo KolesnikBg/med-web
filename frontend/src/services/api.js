@@ -116,19 +116,19 @@ class ApiService {
     return this.request('/user/profile');
   }
 
-  async setup2fa() {
-    return this.request('/user/2fa/setup', { method: 'POST', body: {} });
+  async updateProfile(data) {
+    return this.request('/user/profile', { method: 'PUT', body: data });
   }
 
-  async confirm2fa(code) {
-    return this.request('/user/2fa/confirm', { method: 'POST', body: { code } });
-  }
-
-  async toggle2fa(enabled, password, code = '') {
+  async toggle2fa(enabled, password) {
     return this.request('/user/2fa', {
       method: 'PUT',
-      body: { enabled, password, code },
+      body: { enabled, password },
     });
+  }
+
+  async deleteAccount(password) {
+    return this.request('/user/account', { method: 'DELETE', body: { password } });
   }
 
   _qs(params) {
@@ -199,6 +199,10 @@ class ApiService {
     return this.request('/analyses/batch', { method: 'POST', body: data });
   }
 
+  createDraftKey() {
+    return crypto.randomUUID();
+  }
+
   async getAnalysisTypes() {
     return this.request('/analyses/types');
   }
@@ -248,16 +252,25 @@ class ApiService {
 
   // ─── Attachments ────────────────────────────────────────────────────────────
 
-  async getAttachments(recordType, recordId) {
-    return this.request(
-      `/attachments?record_type=${recordType}&record_id=${recordId}`
-    );
+  async getAttachments({ recordType, recordId, draftKey, batchId } = {}) {
+    const params = new URLSearchParams();
+    if (recordType && recordId) {
+      params.set('record_type', recordType);
+      params.set('record_id', String(recordId));
+    }
+    if (draftKey) params.set('draft_key', draftKey);
+    if (batchId) params.set('batch_id', batchId);
+    return this.request(`/attachments?${params.toString()}`);
   }
 
-  async uploadAttachment(recordType, recordId, file) {
+  async uploadAttachment({ recordType, recordId, draftKey, batchId, file }) {
     const form = new FormData();
-    form.append('record_type', recordType);
-    form.append('record_id', String(recordId));
+    if (recordType && recordId) {
+      form.append('record_type', recordType);
+      form.append('record_id', String(recordId));
+    }
+    if (draftKey) form.append('draft_key', draftKey);
+    if (batchId) form.append('batch_id', batchId);
     form.append('file', file);
     return this.request('/attachments', { method: 'POST', body: form });
   }

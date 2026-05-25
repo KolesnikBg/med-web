@@ -64,13 +64,36 @@ const Calendar = () => {
         extra: {}
     });
 
-    // Список прививок для выбора (загружается один раз)
     const [vaccines, setVaccines] = useState([]);
+    const [doctors, setDoctors] = useState([]);
+    const [catalog, setCatalog] = useState([]);
+    const [panels, setPanels] = useState([]);
+    const [draftKey, setDraftKey] = useState(() => api.createDraftKey());
+    const [useCustomDoctor, setUseCustomDoctor] = useState(false);
+    const [analysisMode, setAnalysisMode] = useState('catalog');
+    const [panelRows, setPanelRows] = useState([]);
 
     useEffect(() => {
         fetchEvents();
-        loadVaccines();
+        loadMeta();
     }, []);
+
+    const loadMeta = async () => {
+        try {
+            const [vacRes, docRes, catRes, panRes] = await Promise.all([
+                api.getVaccines(),
+                api.getDoctorsList(),
+                api.getAnalysisCatalog(),
+                api.getAnalysisPanels(),
+            ]);
+            setVaccines(vacRes.vaccines || []);
+            setDoctors(docRes.doctors || []);
+            setCatalog(catRes.catalog || []);
+            setPanels(panRes.panels || []);
+        } catch (err) {
+            console.error('Calendar meta:', err);
+        }
+    };
 
     const fetchEvents = async () => {
         try {
@@ -91,15 +114,6 @@ const Calendar = () => {
             setError(err.message);
         } finally {
             setLoading(false);
-        }
-    };
-
-    const loadVaccines = async () => {
-        try {
-            const data = await api.getVaccines();
-            if (data.success) setVaccines(data.vaccines);
-        } catch (err) {
-            console.error('Failed to load vaccines:', err);
         }
     };
 
@@ -125,13 +139,41 @@ const Calendar = () => {
             extra: {}
         });
         setAttachmentRecordId(null);
+        setUseCustomDoctor(false);
+        setAnalysisMode('catalog');
+        setPanelRows([]);
     };
 
     const openCreateForm = (date = null) => {
         resetForm();
+        setDraftKey(api.createDraftKey());
         if (date) setFormData(prev => ({ ...prev, date }));
         setFormMode('create');
         setShowFormModal(true);
+    };
+
+    const onPanelSelect = async (panelId) => {
+        handleExtraChange('panel_id', panelId);
+        if (!panelId) {
+            setPanelRows([]);
+            return;
+        }
+        const data = await api.getAnalysisPanel(panelId);
+        setPanelRows((data.panel?.items || []).map((it) => ({
+            type: it.item_name,
+            unit: it.default_unit || it.catalog_unit || '',
+            value: '',
+            notes: '',
+        })));
+    };
+
+    const onCatalogSelect = (catalogId) => {
+        handleExtraChange('catalog_id', catalogId);
+        const item = catalog.find((c) => String(c.id) === String(catalogId));
+        if (item) {
+            handleFormChange('title', item.name);
+            handleExtraChange('unit', item.default_unit || '');
+        }
     };
 
     const openEditForm = (event) => {
@@ -163,13 +205,39 @@ const Calendar = () => {
 
         try {
             if (formMode === 'create') {
-                const res = await api.addCalendarEvent(formData);
-                const rid = parseRecordId(res.id);
-                if (rid) {
-                    setAttachmentRecordId(rid);
-                    setFormMode('edit');
-                    return;
+                const payload = {
+                    table: formData.table,
+                    date: formData.date,
+                    description: formData.description,
+                    draft_key: draftKey,
+                    extra: { ...formData.extra, draft_key: draftKey },
+                };
+                if (formData.table === EVENT_TYPES.APPOINTMENT) {
+                    if (useCustomDoctor) {
+                        payload.title = formData.extra.custom_doctor || formData.title;
+                    } else {
+                        payload.extra.doctor_id = formData.extra.doctor_id;
+                        const doc = doctors.find((d) => String(d.id) === String(formData.extra.doctor_id));
+                        payload.title = doc?.name || formData.title;
+                    }
+                } else if (formData.table === EVENT_TYPES.ANALYSIS) {
+                    if (analysisMode === 'panel') {
+                        payload.extra = {
+                            ...payload.extra,
+                            panel_id: formData.extra.panel_id ? Number(formData.extra.panel_id) : null,
+                            panel_results: panelRows.filter((r) => r.value !== '' && r.value != null),
+                        };
+                        payload.title = panels.find((p) => String(p.id) === String(formData.extra.panel_id))?.name || 'Комплекс';
+                    } else if (analysisMode === 'catalog') {
+                        payload.extra.catalog_id = formData.extra.catalog_id;
+                        payload.title = formData.title;
+                    } else {
+                        payload.title = formData.title;
+                    }
+                } else if (formData.table === EVENT_TYPES.VACCINATION) {
+                    payload.title = formData.extra.custom_name || formData.title;
                 }
+                await api.addCalendarEvent(payload);
             } else {
                 await api.updateCalendarEvent(
                     formData.table,
@@ -350,12 +418,10 @@ const Calendar = () => {
                                 <p><strong>Заметки:</strong> {selectedEvent.description}</p>
                             )}
                             {selectedEvent.extra.is_panel_group ? (
-                                selectedEvent.extra.items?.map((it) => (
-                                    <div key={it.id} className="modal-attachments-block">
-                                        <p className="attachments-label">{it.type}</p>
-                                        <Attachments recordType="analyses" recordId={it.id} compact />
-                                    </div>
-                                ))
+                                <Attachments
+                                    batchId={selectedEvent.extra.batch_id}
+                                    compact
+                                />
                             ) : (
                                 <Attachments
                                     recordType={attachmentRecordType(selectedEvent.table)}
@@ -367,11 +433,11 @@ const Calendar = () => {
                         <div className="modal-actions">
                             {!selectedEvent.extra.is_panel_group && (
                                 <button type="button" className="btn-edit" onClick={() => openEditForm(selectedEvent)}>
-                                    ✏️ Редактировать
+                                    Редактировать
                                 </button>
                             )}
                             <button type="button" className="btn-delete" onClick={handleDeleteEvent}>
-                                🗑️ Удалить
+                                 Удалить
                             </button>
                             <button type="button" onClick={() => setShowViewModal(false)}>Закрыть</button>
                         </div>
@@ -384,7 +450,7 @@ const Calendar = () => {
                 <div className="modal-overlay" onClick={() => setShowFormModal(false)}>
                     <div className="modal-content modal-form" onClick={e => e.stopPropagation()}>
                         <button className="modal-close" onClick={() => setShowFormModal(false)}>×</button>
-                        <h3>{formMode === 'create' ? '➕ Новое событие' : '✏️ Редактирование'}</h3>
+                        <h3>{formMode === 'create' ? 'Новое событие' : 'Редактирование'}</h3>
 
                         <form onSubmit={handleSubmit} className="event-form">
                             {/* Выбор типа события (только при создании) */}
@@ -403,11 +469,124 @@ const Calendar = () => {
                                 </div>
                             )}
 
-                            {/* Название */}
+                            {formData.table === EVENT_TYPES.APPOINTMENT && formMode === 'create' && (
+                                <div className="form-group">
+                                    <label className="checkbox-row">
+                                        <input
+                                            type="checkbox"
+                                            checked={useCustomDoctor}
+                                            onChange={(e) => setUseCustomDoctor(e.target.checked)}
+                                        />
+                                        Свой врач (не из списка)
+                                    </label>
+                                    {useCustomDoctor ? (
+                                        <input
+                                            type="text"
+                                            placeholder="Терапевт, кардиолог..."
+                                            value={formData.extra.custom_doctor || ''}
+                                            onChange={(e) => handleExtraChange('custom_doctor', e.target.value)}
+                                            required
+                                        />
+                                    ) : (
+                                        <select
+                                            value={formData.extra.doctor_id || ''}
+                                            onChange={(e) => handleExtraChange('doctor_id', e.target.value)}
+                                            required
+                                        >
+                                            <option value="">— выберите врача —</option>
+                                            {doctors.map((d) => (
+                                                <option key={d.id} value={d.id}>{d.name}</option>
+                                            ))}
+                                        </select>
+                                    )}
+                                </div>
+                            )}
+
+                            {formData.table === EVENT_TYPES.ANALYSIS && formMode === 'create' && (
+                                <>
+                                    <div className="form-group">
+                                        <label>Тип записи</label>
+                                        <select
+                                            value={analysisMode}
+                                            onChange={(e) => {
+                                                setAnalysisMode(e.target.value);
+                                                setPanelRows([]);
+                                            }}
+                                        >
+                                            <option value="catalog">Из справочника</option>
+                                            <option value="custom">Свой анализ</option>
+                                            <option value="panel">Комплекс (панель)</option>
+                                        </select>
+                                    </div>
+                                    {analysisMode === 'catalog' && (
+                                        <div className="form-group">
+                                            <label>Анализ *</label>
+                                            <select
+                                                value={formData.extra.catalog_id || ''}
+                                                onChange={(e) => onCatalogSelect(e.target.value)}
+                                                required
+                                            >
+                                                <option value="">— выберите —</option>
+                                                {catalog.map((c) => (
+                                                    <option key={c.id} value={c.id}>{c.name}</option>
+                                                ))}
+                                            </select>
+                                        </div>
+                                    )}
+                                    {analysisMode === 'custom' && (
+                                        <div className="form-group">
+                                            <label>Название анализа *</label>
+                                            <input
+                                                type="text"
+                                                value={formData.title}
+                                                onChange={(e) => handleFormChange('title', e.target.value)}
+                                                required
+                                            />
+                                        </div>
+                                    )}
+                                    {analysisMode === 'panel' && (
+                                        <>
+                                            <div className="form-group">
+                                                <label>Панель *</label>
+                                                <select
+                                                    value={formData.extra.panel_id || ''}
+                                                    onChange={(e) => onPanelSelect(e.target.value)}
+                                                    required
+                                                >
+                                                    <option value="">— выберите комплекс —</option>
+                                                    {panels.map((p) => (
+                                                        <option key={p.id} value={p.id}>{p.name}</option>
+                                                    ))}
+                                                </select>
+                                            </div>
+                                            {panelRows.length > 0 && (
+                                                <div className="panel-grid">
+                                                    {panelRows.map((row, idx) => (
+                                                        <div key={row.type} className="panel-row">
+                                                            <span>{row.type} ({row.unit})</span>
+                                                            <input
+                                                                type="text"
+                                                                placeholder="Значение"
+                                                                value={row.value}
+                                                                onChange={(e) => {
+                                                                    const next = [...panelRows];
+                                                                    next[idx] = { ...row, value: e.target.value };
+                                                                    setPanelRows(next);
+                                                                }}
+                                                            />
+                                                        </div>
+                                                    ))}
+                                                </div>
+                                            )}
+                                        </>
+                                    )}
+                                </>
+                            )}
+
                             <div className="form-group">
                                 <label>
-                                    {formData.table === EVENT_TYPES.APPOINTMENT && 'Специальность врача *'}
-                                    {formData.table === EVENT_TYPES.ANALYSIS && 'Тип анализа *'}
+                                    {formData.table === EVENT_TYPES.APPOINTMENT && formMode === 'edit' && 'Врач *'}
+                                    {formData.table === EVENT_TYPES.ANALYSIS && analysisMode !== 'panel' && formMode === 'edit' && 'Тип анализа *'}
                                     {formData.table === EVENT_TYPES.VACCINATION && 'Название прививки *'}
                                 </label>
                                 {formData.table === EVENT_TYPES.VACCINATION && formMode === 'create' ? (
@@ -423,7 +602,7 @@ const Calendar = () => {
                                                 }
                                             }}
                                         >
-                                            <option value="custom">➕ Добавить свою</option>
+                                            <option value="custom">Добавить свою</option>
                                             {vaccines.map(v => (
                                                 <option key={v.id} value={v.id}>{v.name}</option>
                                             ))}
@@ -438,19 +617,14 @@ const Calendar = () => {
                                             />
                                         )}
                                     </>
-                                ) : (
+                                ) : formMode === 'edit' ? (
                                     <input
                                         type="text"
                                         value={formData.title}
                                         onChange={(e) => handleFormChange('title', e.target.value)}
-                                        placeholder={
-                                            formData.table === EVENT_TYPES.APPOINTMENT ? 'Терапевт, Кардиолог...' :
-                                                formData.table === EVENT_TYPES.ANALYSIS ? 'Общий анализ крови, Холестерин...' :
-                                                    'Название'
-                                        }
                                         required
                                     />
-                                )}
+                                ) : null}
                             </div>
 
                             {/* Дата */}
@@ -465,7 +639,7 @@ const Calendar = () => {
                             </div>
 
                             {/* Поля для Анализов */}
-                            {formData.table === EVENT_TYPES.ANALYSIS && (
+                            {formData.table === EVENT_TYPES.ANALYSIS && analysisMode !== 'panel' && (
                                 <>
                                     <div className="form-row">
                                         <div className="form-group">
@@ -507,25 +681,23 @@ const Calendar = () => {
                                 />
                             </div>
 
-                            {(formMode === 'edit' || attachmentRecordId) && formData.table !== EVENT_TYPES.VACCINATION && (
+                            {formMode === 'create' && (
+                                <Attachments draftKey={draftKey} compact />
+                            )}
+                            {formMode === 'edit' && formData.table !== EVENT_TYPES.VACCINATION && (
                                 <Attachments
                                     recordType={formData.table}
-                                    recordId={attachmentRecordId || selectedEvent?.recordId}
+                                    recordId={selectedEvent?.recordId}
                                     compact
                                 />
                             )}
 
                             <div className="modal-actions">
                                 <button type="submit" className="btn-primary">
-                                    {formMode === 'create' ? '💾 Создать' : '💾 Сохранить'}
+                                    {formMode === 'create' ? 'Создать' : 'Сохранить'}
                                 </button>
-                                {attachmentRecordId && formMode === 'edit' && (
-                                    <button type="button" onClick={() => { setShowFormModal(false); resetForm(); fetchEvents(); }}>
-                                        Готово
-                                    </button>
-                                )}
-                                <button type="button" onClick={() => { setShowFormModal(false); resetForm(); }}>
-                                    Отмена
+                                <button type="button" onClick={() => { setShowFormModal(false); resetForm(); fetchEvents(); }}>
+                                    {formMode === 'create' ? 'Отмена' : 'Закрыть'}
                                 </button>
                             </div>
                         </form>

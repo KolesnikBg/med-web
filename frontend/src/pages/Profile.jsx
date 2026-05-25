@@ -1,25 +1,36 @@
 import React, { useEffect, useState } from 'react';
+import { useNavigate } from 'react-router-dom';
 import api from '../services/api';
 
-const Profile = ({ user, onUserUpdate }) => {
+const Profile = ({ user, onUserUpdate, onLogout }) => {
+  const navigate = useNavigate();
   const [profile, setProfile] = useState(user);
+  const [editMode, setEditMode] = useState(false);
+  const [form, setForm] = useState({ name: '', sex: 'male', birth_date: '' });
+  const [passwordForm, setPasswordForm] = useState({ password: '', newPassword: '' });
   const [twoFaEnabled, setTwoFaEnabled] = useState(false);
-  const [setupUri, setSetupUri] = useState('');
-  const [setupSecret, setSetupSecret] = useState('');
-  const [confirmCode, setConfirmCode] = useState('');
-  const [togglePassword, setTogglePassword] = useState('');
-  const [toggleCode, setToggleCode] = useState('');
+  const [twoFaPassword, setTwoFaPassword] = useState('');
+  const [deletePassword, setDeletePassword] = useState('');
   const [message, setMessage] = useState('');
   const [error, setError] = useState('');
 
-  useEffect(() => {
+  const loadProfile = () => {
     api.getProfile().then((data) => {
       if (data.user) {
         setProfile(data.user);
         setTwoFaEnabled(data.user.two_factor_enabled);
+        setForm({
+          name: data.user.name || '',
+          sex: data.user.sex || 'male',
+          birth_date: data.user.birth_date?.slice(0, 10) || '',
+        });
         onUserUpdate?.(data.user);
       }
     }).catch(() => {});
+  };
+
+  useEffect(() => {
+    loadProfile();
   }, []);
 
   const sexLabel = profile?.sex === 'female' ? 'Женский' : 'Мужской';
@@ -36,25 +47,22 @@ const Profile = ({ user, onUserUpdate }) => {
     return age;
   };
 
-  const handleSetup2fa = async () => {
+  const handleSaveProfile = async (e) => {
+    e.preventDefault();
     setError('');
+    setMessage('');
     try {
-      const data = await api.setup2fa();
-      setSetupSecret(data.secret);
-      setSetupUri(data.otpauth_uri);
-      setMessage('Отсканируйте QR в Google Authenticator и введите код ниже');
-    } catch (err) {
-      setError(err.message);
-    }
-  };
-
-  const handleConfirm2fa = async () => {
-    setError('');
-    try {
-      await api.confirm2fa(confirmCode);
-      setTwoFaEnabled(true);
-      setMessage('2FA включена');
-      setSetupUri('');
+      const body = { ...form };
+      if (passwordForm.newPassword) {
+        body.password = passwordForm.password;
+        body.new_password = passwordForm.newPassword;
+      }
+      const data = await api.updateProfile(body);
+      setProfile(data.user);
+      onUserUpdate?.(data.user);
+      setEditMode(false);
+      setPasswordForm({ password: '', newPassword: '' });
+      setMessage('Профиль сохранён');
     } catch (err) {
       setError(err.message);
     }
@@ -62,12 +70,33 @@ const Profile = ({ user, onUserUpdate }) => {
 
   const handleToggle2fa = async (enabled) => {
     setError('');
+    setMessage('');
+    if (!twoFaPassword) {
+      setError('Введите пароль для подтверждения');
+      return;
+    }
     try {
-      await api.toggle2fa(enabled, togglePassword, toggleCode);
-      setTwoFaEnabled(enabled);
-      setMessage(enabled ? '2FA включена' : '2FA отключена');
-      setTogglePassword('');
-      setToggleCode('');
+      const data = await api.toggle2fa(enabled, twoFaPassword);
+      setTwoFaEnabled(data.two_factor_enabled);
+      setMessage(data.message);
+      setTwoFaPassword('');
+    } catch (err) {
+      setError(err.message);
+    }
+  };
+
+  const handleDeleteAccount = async () => {
+    if (!window.confirm('Удалить аккаунт безвозвратно? Все записи и фото будут удалены.')) return;
+    if (!deletePassword) {
+      setError('Введите пароль для удаления аккаунта');
+      return;
+    }
+    setError('');
+    try {
+      await api.deleteAccount(deletePassword);
+      api.clearToken();
+      onLogout?.();
+      navigate('/login');
     } catch (err) {
       setError(err.message);
     }
@@ -76,77 +105,123 @@ const Profile = ({ user, onUserUpdate }) => {
   if (!profile) return <div className="loading">Загрузка...</div>;
 
   return (
-    <div className="profile-page">
+    <div className="profile-page page">
       <h2>Мой профиль</h2>
-      <div className="profile-card">
-        <p><strong>ФИО:</strong> {profile.full_name || '—'}</p>
-        <p><strong>Email:</strong> {profile.email}</p>
-        <p><strong>Пол:</strong> {sexLabel}</p>
-        <p><strong>Дата рождения:</strong> {new Date(profile.birth_date).toLocaleDateString('ru-RU')}</p>
-        <p><strong>Полных лет:</strong> {calculateAge(profile.birth_date)}</p>
-        {profile.created_at && (
-          <p><strong>С нами с:</strong> {new Date(profile.created_at).toLocaleDateString('ru-RU')}</p>
-        )}
-      </div>
+      {message && <p className="success-message">{message}</p>}
+      {error && <div className="error-message">{error}</div>}
 
-      <section className="recent-section" style={{ marginTop: 24 }}>
-        <h2>Двухфакторная аутентификация</h2>
-        <p className="dashboard-subtitle">
-          Статус: {twoFaEnabled ? 'включена' : 'выключена'}. Можно включить/выключить для проверки.
-        </p>
-        {message && <p>{message}</p>}
-        {error && <div className="error-message">{error}</div>}
-
-        {!twoFaEnabled && !setupUri && (
-          <button type="button" className="btn btn-secondary" onClick={handleSetup2fa}>
-            Настроить 2FA
+      {!editMode ? (
+        <div className="profile-card card">
+          <p><strong>ФИО:</strong> {profile.name || '—'}</p>
+          <p><strong>Email:</strong> {profile.email}</p>
+          <p><strong>Пол:</strong> {sexLabel}</p>
+          <p><strong>Дата рождения:</strong> {new Date(profile.birth_date).toLocaleDateString('ru-RU')}</p>
+          <p><strong>Полных лет:</strong> {calculateAge(profile.birth_date)}</p>
+          {profile.created_at && (
+            <p><strong>С нами с:</strong> {new Date(profile.created_at).toLocaleDateString('ru-RU')}</p>
+          )}
+          <button type="button" className="btn btn-primary" onClick={() => setEditMode(true)}>
+            Редактировать
           </button>
-        )}
-
-        {setupUri && !twoFaEnabled && (
-          <div>
-            <p><small>Секрет: {setupSecret}</small></p>
-            <p><small>URI: {setupUri}</small></p>
+        </div>
+      ) : (
+        <form className="card profile-card" onSubmit={handleSaveProfile}>
+          <label>
+            ФИО
             <input
-              placeholder="Код из приложения"
-              value={confirmCode}
-              onChange={(e) => setConfirmCode(e.target.value)}
+              value={form.name}
+              onChange={(e) => setForm({ ...form, name: e.target.value })}
+              required
             />
-            <button type="button" className="btn btn-primary" onClick={handleConfirm2fa}>
-              Подтвердить и включить
+          </label>
+          <label>
+            Пол
+            <select value={form.sex} onChange={(e) => setForm({ ...form, sex: e.target.value })}>
+              <option value="male">Мужской</option>
+              <option value="female">Женский</option>
+            </select>
+          </label>
+          <label>
+            Дата рождения
+            <input
+              type="date"
+              value={form.birth_date}
+              onChange={(e) => setForm({ ...form, birth_date: e.target.value })}
+              required
+            />
+          </label>
+          <h3>Смена пароля (необязательно)</h3>
+          <label>
+            Текущий пароль
+            <input
+              type="password"
+              value={passwordForm.password}
+              onChange={(e) => setPasswordForm({ ...passwordForm, password: e.target.value })}
+            />
+          </label>
+          <label>
+            Новый пароль
+            <input
+              type="password"
+              value={passwordForm.newPassword}
+              onChange={(e) => setPasswordForm({ ...passwordForm, newPassword: e.target.value })}
+            />
+          </label>
+          <div className="form-actions">
+            <button type="submit" className="btn btn-primary">Сохранить</button>
+            <button type="button" className="btn btn-secondary" onClick={() => setEditMode(false)}>
+              Отмена
             </button>
           </div>
-        )}
+        </form>
+      )}
 
-        <div className="form-row" style={{ marginTop: 16 }}>
+      <section className="card" style={{ marginTop: 24 }}>
+        <h3>Двухфакторная аутентификация (email)</h3>
+        <p className="page-lead">
+          Статус: {twoFaEnabled ? 'включена' : 'выключена'}.
+          {twoFaEnabled
+            ? ' При входе на почту придёт код.'
+            : ' Включите — при каждом входе код будет отправляться на email.'}
+        </p>
+        <label>
+          Пароль для подтверждения
           <input
             type="password"
-            placeholder="Пароль"
-            value={togglePassword}
-            onChange={(e) => setTogglePassword(e.target.value)}
+            value={twoFaPassword}
+            onChange={(e) => setTwoFaPassword(e.target.value)}
           />
-          <input
-            placeholder="Код 2FA (если включена)"
-            value={toggleCode}
-            onChange={(e) => setToggleCode(e.target.value)}
-          />
-        </div>
+        </label>
         <div className="form-actions">
-          <button
-            type="button"
-            className="btn btn-primary"
-            onClick={() => handleToggle2fa(true)}
-          >
-            Включить 2FA
-          </button>
-          <button
-            type="button"
-            className="btn-link"
-            onClick={() => handleToggle2fa(false)}
-          >
-            Выключить 2FA
-          </button>
+          {!twoFaEnabled && (
+            <button type="button" className="btn btn-primary" onClick={() => handleToggle2fa(true)}>
+              Включить 2FA
+            </button>
+          )}
+          {twoFaEnabled && (
+            <button type="button" className="btn btn-secondary" onClick={() => handleToggle2fa(false)}>
+              Выключить 2FA
+            </button>
+          )}
         </div>
+      </section>
+
+      <section className="card card--danger" style={{ marginTop: 24 }}>
+        <h3>Удаление аккаунта</h3>
+        <p className="page-lead">
+          Будут удалены все приёмы, анализы, прививки и загруженные файлы.
+        </p>
+        <label>
+          Пароль
+          <input
+            type="password"
+            value={deletePassword}
+            onChange={(e) => setDeletePassword(e.target.value)}
+          />
+        </label>
+        <button type="button" className="btn btn-delete" onClick={handleDeleteAccount}>
+          Удалить аккаунт
+        </button>
       </section>
     </div>
   );

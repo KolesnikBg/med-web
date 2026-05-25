@@ -480,21 +480,3 @@
   from { transform: translateY(100%); }
   to { transform: translateY(0); }
 }
-
-/* Тёмная тема (опционально) */
-/* @media (prefers-color-scheme: dark) {
-  .modal-content { background: #1f2937; color: #f9fafb; }
-  .modal-body { color: #d1d5db; }
-  .modal-body strong { color: #f9fafb; }
-  .form-group input,
-  .form-group select,
-  .form-group textarea {
-    background: #374151;
-    border-color: #4b5563;
-    color: #f9fafb;
-  }
-  .modal-actions button:not(.btn-primary):not(.btn-edit):not(.btn-delete) {
-    background: #374151;
-    color: #f9fafb;
-  }
-} */

@@ -77,7 +77,7 @@ function App() {
             <Route path="/appointments" element={isAuthenticated ? <Appointments /> : <Navigate to="/login" />} />
             <Route path="/add-appointment" element={isAuthenticated ? <Navigate to="/appointments" /> : <Navigate to="/login" />} />
             <Route path="/analysis" element={isAuthenticated ? <Analysis /> : <Navigate to="/login" />} />
-            <Route path="/profile" element={isAuthenticated ? <Profile user={user} onUserUpdate={handleUserUpdate} /> : <Navigate to="/login" />} />
+            <Route path="/profile" element={isAuthenticated ? <Profile user={user} onUserUpdate={handleUserUpdate} onLogout={handleLogout} /> : <Navigate to="/login" />} />
             <Route path="/vaccinations" element={isAuthenticated ? <Vaccinations /> : <Navigate to="/login" />} />
             <Route
               path="/admin"

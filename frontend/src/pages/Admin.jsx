@@ -22,7 +22,7 @@ const Admin = () => {
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(true);
 
-  const [doctorForm, setDoctorForm] = useState({ specialty: '' });
+  const [doctorForm, setDoctorForm] = useState({ name: '' });
   const [catalogForm, setCatalogForm] = useState({ name: '', default_unit: '' });
   const [panelForm, setPanelForm] = useState({ name: '', description: '', catalog_ids: [] });
   const [editingPanelId, setEditingPanelId] = useState(null);
@@ -101,7 +101,7 @@ const Admin = () => {
             <tbody>
               {users.map((u) => (
                 <tr key={u.id}>
-                  <td>{u.full_name || '—'}</td>
+                  <td>{u.name || '—'}</td>
                   <td>{u.email}</td>
                   <td>
                     {!u.is_admin && (
@@ -122,17 +122,17 @@ const Admin = () => {
         <section className="card">
           <form className="form-inline" onSubmit={async (e) => {
             e.preventDefault();
-            await api.adminCreateDoctor({ specialty: doctorForm.specialty });
-            setDoctorForm({ specialty: '' });
+            await api.adminCreateDoctor({ name: doctorForm.name });
+            setDoctorForm({ name: '' });
             load();
           }}>
-            <input placeholder="Специальность (терапевт, кардиолог…)" value={doctorForm.specialty} onChange={(e) => setDoctorForm({ specialty: e.target.value })} required />
+            <input placeholder="Врач / специальность" value={doctorForm.name} onChange={(e) => setDoctorForm({ name: e.target.value })} required />
             <button type="submit" className="btn btn-primary">Добавить</button>
           </form>
           <ul className="simple-list">
             {doctors.map((d) => (
               <li key={d.id}>
-                {d.specialty}
+                {d.name}
                 <button type="button" className="btn-link" onClick={async () => { await api.adminDeleteDoctor(d.id); load(); }}>Удалить</button>
               </li>
             ))}

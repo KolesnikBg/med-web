@@ -31,16 +31,17 @@ const Vaccinations = () => {
     const { name, value } = e.target;
     setForm((prev) => ({ ...prev, [name]: value }));
   };
-
+// загрузка прививок
   const loadVaccines = async () => {
-    setListLoading(true);
-    setError('');
+    setListLoading(true); // загрузка списка прививок
+    setError(''); // очистка ошибки
     try {
-      const params = {};
-      if (filters.vaccine_id) params.vaccine_id = filters.vaccine_id;
-      if (filters.search) params.search = filters.search;
-      if (filters.date_from) params.date_from = filters.date_from;
-      if (filters.date_to) params.date_to = filters.date_to;
+      const params = {}; // параметры запроса
+      if (filters.vaccine_id) params.vaccine_id = filters.vaccine_id; // фильтр по прививке
+      if (filters.search) params.search = filters.search; // фильтр по поиску
+      if (filters.date_from) params.date_from = filters.date_from; // фильтр по дате от
+      if (filters.date_to) params.date_to = filters.date_to; // фильтр по дате до
+      // загрузка прививок, сделанных пользователем и рекомендаций
       const [vaccinesRes, userVaccRes, recRes] = await Promise.all([
         api.getVaccines(),
         api.getUserVaccinations(params),
@@ -56,6 +57,7 @@ const Vaccinations = () => {
     }
   };
 
+  // загрузка прививок при изменении фильтров
   useEffect(() => {
     loadVaccines();
   }, [filters]);

@@ -14,22 +14,22 @@ from flask_jwt_extended import (
 )
 
 from config import JWT_ACCESS_TOKEN_EXPIRES_HOURS, UPLOAD_DIR
-from db import get_db, init_db, user_to_dict, build_full_name_from_parts, insert_user_row
-from services.email_service import send_verification_code, send_password_reset
+from db import get_db, init_db, user_to_dict, build_name_from_parts, delete_user_account
+from services.email_service import send_verification_code, send_password_reset, send_2fa_code
 from reference import register_reference_routes, resolve_doctor
 from utils import (
     VALID_RECORD_TYPES,
     admin_required,
     owns_record,
+    owns_batch,
     validate_upload,
     save_upload_file,
     delete_stored_file,
     generate_code,
     code_expires,
     is_expired,
-    create_totp_secret,
-    verify_totp,
-    get_totp_uri,
+    link_draft_attachments,
+    link_draft_to_batch,
 )
 
 app = Flask(__name__)
@@ -70,7 +70,7 @@ def register():
     if not all(k in data and data[k] for k in required):
         return jsonify({'success': False, 'message': 'Заполните обязательные поля'}), 400
 
-    full_name = build_full_name_from_parts(
+    display_name = build_name_from_parts(
         data.get('lastname', '').strip(),
         data.get('name', '').strip(),
         data.get('patronymic', '').strip(),
@@ -92,17 +92,15 @@ def register():
 
     code = generate_code()
     pwd_hash = bcrypt.hashpw(data['password'].encode(), bcrypt.gensalt()).decode()
-    user_id = insert_user_row(
-        cursor,
-        full_name=full_name,
-        email=email,
-        password_hash=pwd_hash,
-        sex=data['sex'],
-        birth_date=data['birth_date'],
-        email_verified=0,
-        verification_code=code,
-        verification_expires=code_expires(30),
-    )
+    cursor.execute('''
+        INSERT INTO users (name, email, password_hash, sex, birth_date,
+                           verification_code, verification_expires, email_verified)
+        VALUES (?, ?, ?, ?, ?, ?, ?, 0)
+    ''', (
+        display_name, email, pwd_hash, data['sex'], data['birth_date'],
+        code, code_expires(30),
+    ))
+    user_id = cursor.lastrowid
     conn.commit()
     conn.close()
 
@@ -204,7 +202,16 @@ def login():
             'message': 'Подтвердите email перед входом',
         }), 403
 
-    if user['two_factor_enabled'] and user['totp_secret']:
+    if user['two_factor_enabled']:
+        code = generate_code()
+        conn = get_db()
+        cursor = conn.cursor()
+        cursor.execute('''
+            UPDATE users SET two_fa_code = ?, two_fa_expires = ? WHERE id = ?
+        ''', (code, code_expires(10), user['id']))
+        conn.commit()
+        conn.close()
+        send_2fa_code(email, code)
         temp_token = create_access_token(
             identity=str(user['id']),
             additional_claims={'2fa_pending': True},
@@ -215,6 +222,7 @@ def login():
             'requires_2fa': True,
             'temp_token': temp_token,
             'user': _public_user(user),
+            'dev_code': code if os.getenv('MAIL_MODE', 'console') == 'console' else None,
         })
 
     access_token = create_access_token(identity=str(user['id']))
@@ -248,8 +256,19 @@ def verify_2fa_login():
     user = cursor.fetchone()
     conn.close()
 
-    if not user or not verify_totp(user['totp_secret'], code):
-        return jsonify({'success': False, 'message': 'Неверный код 2FA'}), 401
+    if not user or user['two_fa_code'] != code:
+        return jsonify({'success': False, 'message': 'Неверный код'}), 401
+    if is_expired(user['two_fa_expires']):
+        return jsonify({'success': False, 'message': 'Код истёк. Войдите снова'}), 401
+
+    conn = get_db()
+    cursor = conn.cursor()
+    cursor.execute(
+        'UPDATE users SET two_fa_code = NULL, two_fa_expires = NULL WHERE id = ?',
+        (user_id,),
+    )
+    conn.commit()
+    conn.close()
 
     access_token = create_access_token(identity=str(user_id))
     return jsonify({
@@ -326,7 +345,7 @@ def profile():
     conn = get_db()
     cursor = conn.cursor()
     cursor.execute(
-        'SELECT id, full_name, email, sex, birth_date, role, '
+        'SELECT id, name, email, sex, birth_date, role, '
         'email_verified, two_factor_enabled, created_at FROM users WHERE id = ?',
         (user_id,),
     )
@@ -337,41 +356,60 @@ def profile():
     return jsonify({'success': False, 'message': 'Пользователь не найден'}), 404
 
 
-@app.route('/api/user/2fa/setup', methods=['POST'])
+@app.route('/api/user/profile', methods=['PUT'])
 @jwt_required()
-def setup_2fa():
+def update_profile():
     user_id = int(get_jwt_identity())
+    data = request.get_json() or {}
     conn = get_db()
     cursor = conn.cursor()
-    cursor.execute('SELECT email, totp_secret FROM users WHERE id = ?', (user_id,))
+    cursor.execute('SELECT password_hash FROM users WHERE id = ?', (user_id,))
     user = cursor.fetchone()
-    secret = user['totp_secret'] or create_totp_secret()
-    cursor.execute('UPDATE users SET totp_secret = ? WHERE id = ?', (secret, user_id))
-    conn.commit()
-    conn.close()
-    return jsonify({
-        'success': True,
-        'secret': secret,
-        'otpauth_uri': get_totp_uri(secret, user['email']),
-    })
-
-
-@app.route('/api/user/2fa/confirm', methods=['POST'])
-@jwt_required()
-def confirm_2fa():
-    user_id = int(get_jwt_identity())
-    code = (request.get_json() or {}).get('code', '').strip()
-    conn = get_db()
-    cursor = conn.cursor()
-    cursor.execute('SELECT totp_secret FROM users WHERE id = ?', (user_id,))
-    user = cursor.fetchone()
-    if not user or not verify_totp(user['totp_secret'], code):
+    if not user:
         conn.close()
-        return jsonify({'success': False, 'message': 'Неверный код'}), 400
-    cursor.execute('UPDATE users SET two_factor_enabled = 1 WHERE id = ?', (user_id,))
-    conn.commit()
+        return jsonify({'success': False, 'message': 'Пользователь не найден'}), 404
+
+    fields, values = [], []
+    if 'name' in data and (data.get('name') or '').strip():
+        fields.append('name = ?')
+        values.append(data['name'].strip())
+    if 'sex' in data and data['sex'] in ('male', 'female'):
+        fields.append('sex = ?')
+        values.append(data['sex'])
+    if 'birth_date' in data and data['birth_date']:
+        fields.append('birth_date = ?')
+        values.append(data['birth_date'])
+
+    new_password = data.get('new_password', '')
+    if new_password:
+        old_password = data.get('password', '')
+        if not old_password or not bcrypt.checkpw(
+            old_password.encode(), user['password_hash'].encode()
+        ):
+            conn.close()
+            return jsonify({'success': False, 'message': 'Неверный текущий пароль'}), 401
+        if len(new_password) < 6:
+            conn.close()
+            return jsonify({'success': False, 'message': 'Новый пароль минимум 6 символов'}), 400
+        fields.append('password_hash = ?')
+        values.append(bcrypt.hashpw(new_password.encode(), bcrypt.gensalt()).decode())
+
+    if fields:
+        values.append(user_id)
+        cursor.execute(
+            f"UPDATE users SET {', '.join(fields)} WHERE id = ?",
+            values,
+        )
+        conn.commit()
+
+    cursor.execute(
+        'SELECT id, name, email, sex, birth_date, role, '
+        'email_verified, two_factor_enabled, created_at FROM users WHERE id = ?',
+        (user_id,),
+    )
+    row = cursor.fetchone()
     conn.close()
-    return jsonify({'success': True, 'message': '2FA включена'})
+    return jsonify({'success': True, 'user': _public_user(row)})
 
 
 @app.route('/api/user/2fa', methods=['PUT'])
@@ -379,35 +417,52 @@ def confirm_2fa():
 def toggle_2fa():
     user_id = int(get_jwt_identity())
     data = request.get_json() or {}
-    enabled = data.get('enabled')
+    enabled = bool(data.get('enabled'))
     password = data.get('password', '')
-    code = (data.get('code') or '').strip()
 
     conn = get_db()
     cursor = conn.cursor()
-    cursor.execute('SELECT password_hash, totp_secret, two_factor_enabled FROM users WHERE id = ?', (user_id,))
+    cursor.execute('SELECT password_hash FROM users WHERE id = ?', (user_id,))
     user = cursor.fetchone()
     if not user or not bcrypt.checkpw(password.encode(), user['password_hash'].encode()):
         conn.close()
         return jsonify({'success': False, 'message': 'Неверный пароль'}), 401
 
-    if enabled:
-        if not user['totp_secret']:
-            conn.close()
-            return jsonify({'success': False, 'message': 'Сначала настройте 2FA'}), 400
-        if not verify_totp(user['totp_secret'], code):
-            conn.close()
-            return jsonify({'success': False, 'message': 'Неверный код 2FA'}), 400
-        cursor.execute('UPDATE users SET two_factor_enabled = 1 WHERE id = ?', (user_id,))
-    else:
-        if user['two_factor_enabled'] and user['totp_secret'] and not verify_totp(user['totp_secret'], code):
-            conn.close()
-            return jsonify({'success': False, 'message': 'Введите код 2FA для отключения'}), 400
-        cursor.execute('UPDATE users SET two_factor_enabled = 0 WHERE id = ?', (user_id,))
-
+    cursor.execute(
+        'UPDATE users SET two_factor_enabled = ?, two_fa_code = NULL, two_fa_expires = NULL WHERE id = ?',
+        (1 if enabled else 0, user_id),
+    )
     conn.commit()
     conn.close()
-    return jsonify({'success': True, 'two_factor_enabled': bool(enabled)})
+    return jsonify({
+        'success': True,
+        'two_factor_enabled': enabled,
+        'message': '2FA включена — при входе код придёт на email' if enabled else '2FA отключена',
+    })
+
+
+@app.route('/api/user/account', methods=['DELETE'])
+@jwt_required()
+def delete_own_account():
+    user_id = int(get_jwt_identity())
+    password = (request.get_json() or {}).get('password', '')
+    conn = get_db()
+    cursor = conn.cursor()
+    cursor.execute('SELECT password_hash, role FROM users WHERE id = ?', (user_id,))
+    user = cursor.fetchone()
+    if not user:
+        conn.close()
+        return jsonify({'success': False, 'message': 'Пользователь не найден'}), 404
+    if user['role'] == 'admin':
+        conn.close()
+        return jsonify({'success': False, 'message': 'Администратор не может удалить аккаунт здесь'}), 400
+    if not bcrypt.checkpw(password.encode(), user['password_hash'].encode()):
+        conn.close()
+        return jsonify({'success': False, 'message': 'Неверный пароль'}), 401
+    conn.close()
+    if not delete_user_account(user_id):
+        return jsonify({'success': False, 'message': 'Ошибка удаления'}), 500
+    return jsonify({'success': True, 'message': 'Аккаунт и все данные удалены'})
 
 
 # ─── Appointments ─────────────────────────────────────────────────────────────
@@ -422,24 +477,25 @@ def create_appointment():
 
     conn = get_db()
     cursor = conn.cursor()
-    doctor_id, specialty = resolve_doctor(
+    doctor_id, doc_name = resolve_doctor(
         cursor, user_id,
         doctor_id=data.get('doctor_id'),
-        specialty=data.get('specialty') or data.get('type') or data.get('doctor_name'),
+        name=data.get('type') or data.get('name') or data.get('specialty') or data.get('doctor_name'),
     )
-    if not specialty:
+    if not doc_name:
         conn.close()
-        return jsonify({'success': False, 'message': 'Укажите специальность врача'}), 400
+        return jsonify({'success': False, 'message': 'Укажите врача'}), 400
 
     cursor.execute('''
         INSERT INTO appointments (user_id, type, doctor_id, description, appointment_date, diagnosis)
         VALUES (?, ?, ?, ?, ?, ?)
     ''', (
-        user_id, specialty, doctor_id, data.get('description', ''),
+        user_id, doc_name, doctor_id, data.get('description', ''),
         data['appointment_date'], data.get('diagnosis', ''),
     ))
-    conn.commit()
     aid = cursor.lastrowid
+    link_draft_attachments(cursor, user_id, data.get('draft_key'), 'appointments', aid)
+    conn.commit()
     cursor.execute('SELECT * FROM appointments WHERE id = ?', (aid,))
     row = dict(cursor.fetchone())
     conn.close()
@@ -456,7 +512,7 @@ def get_appointments():
     date_to = request.args.get('date_to', '').strip()
     conn = get_db()
     cursor = conn.cursor()
-    q = 'SELECT a.*, d.specialty as doctor_specialty FROM appointments a LEFT JOIN doctors d ON a.doctor_id = d.id WHERE a.user_id = ?'
+    q = 'SELECT a.*, d.name as doctor_name FROM appointments a LEFT JOIN doctors d ON a.doctor_id = d.id WHERE a.user_id = ?'
     params = [user_id]
     if doctor_id:
         q += ' AND a.doctor_id = ?'
@@ -502,14 +558,14 @@ def update_appointment(appointment_id):
         return jsonify({'success': False, 'message': 'Приём не найден'}), 404
     fields, values = [], []
     if 'doctor_id' in data or 'type' in data or 'doctor_name' in data or 'specialty' in data:
-        did, spec = resolve_doctor(
+        did, dname = resolve_doctor(
             cursor, user_id,
             doctor_id=data.get('doctor_id'),
-            specialty=data.get('specialty') or data.get('type') or data.get('doctor_name'),
+            name=data.get('type') or data.get('name') or data.get('specialty') or data.get('doctor_name'),
         )
-        if spec:
+        if dname:
             fields.extend(['type = ?', 'doctor_id = ?'])
-            values.extend([spec, did])
+            values.extend([dname, did])
     for key in ('description', 'appointment_date', 'diagnosis'):
         if key in data:
             fields.append(f'{key} = ?')
@@ -563,8 +619,9 @@ def create_analysis():
         user_id, data['type'].strip(), data['analysis_date'],
         data['unit'].strip(), str(data['value']).strip(), data.get('notes', ''),
     ))
-    conn.commit()
     aid = cursor.lastrowid
+    link_draft_attachments(cursor, user_id, data.get('draft_key'), 'analyses', aid)
+    conn.commit()
     cursor.execute('SELECT * FROM analyses WHERE id = ?', (aid,))
     row = dict(cursor.fetchone())
     conn.close()
@@ -814,25 +871,69 @@ def _delete_attachments_for_record(cursor, user_id, record_type, record_id):
     ''', (user_id, record_type, record_id))
 
 
+def _attachment_count(cursor, user_id, record_type=None, record_id=None,
+                      draft_key=None, batch_id=None):
+    if draft_key:
+        cursor.execute(
+            'SELECT COUNT(*) FROM attachments WHERE user_id = ? AND draft_key = ?',
+            (user_id, draft_key),
+        )
+    elif batch_id:
+        cursor.execute(
+            'SELECT COUNT(*) FROM attachments WHERE user_id = ? AND batch_id = ?',
+            (user_id, batch_id),
+        )
+    else:
+        cursor.execute(
+            'SELECT COUNT(*) FROM attachments WHERE user_id = ? AND record_type = ? AND record_id = ?',
+            (user_id, record_type, record_id),
+        )
+    return cursor.fetchone()[0]
+
+
 @app.route('/api/attachments', methods=['GET'])
 @jwt_required()
 def list_attachments():
     user_id = int(get_jwt_identity())
     record_type = request.args.get('record_type', '')
     record_id = request.args.get('record_id', type=int)
-    if record_type not in VALID_RECORD_TYPES or not record_id:
-        return jsonify({'success': False, 'message': 'Укажите record_type и record_id'}), 400
+    draft_key = request.args.get('draft_key', '').strip()
+    batch_id = request.args.get('batch_id', '').strip()
 
     conn = get_db()
     cursor = conn.cursor()
-    if not owns_record(cursor, user_id, record_type, record_id):
+
+    if draft_key:
+        cursor.execute('''
+            SELECT id, original_filename, mime_type, size, created_at,
+                   record_type, record_id, draft_key, batch_id
+            FROM attachments WHERE user_id = ? AND draft_key = ?
+            ORDER BY created_at DESC
+        ''', (user_id, draft_key))
+    elif batch_id:
+        if not owns_batch(cursor, user_id, batch_id):
+            conn.close()
+            return jsonify({'success': False, 'message': 'Комплекс не найден'}), 404
+        cursor.execute('''
+            SELECT id, original_filename, mime_type, size, created_at,
+                   record_type, record_id, draft_key, batch_id
+            FROM attachments WHERE user_id = ? AND batch_id = ?
+            ORDER BY created_at DESC
+        ''', (user_id, batch_id))
+    elif record_type in VALID_RECORD_TYPES and record_id:
+        if not owns_record(cursor, user_id, record_type, record_id):
+            conn.close()
+            return jsonify({'success': False, 'message': 'Запись не найдена'}), 404
+        cursor.execute('''
+            SELECT id, original_filename, mime_type, size, created_at,
+                   record_type, record_id, draft_key, batch_id
+            FROM attachments WHERE user_id = ? AND record_type = ? AND record_id = ?
+            ORDER BY created_at DESC
+        ''', (user_id, record_type, record_id))
+    else:
         conn.close()
-        return jsonify({'success': False, 'message': 'Запись не найдена'}), 404
-    cursor.execute('''
-        SELECT id, original_filename, mime_type, size, created_at, record_type, record_id
-        FROM attachments WHERE user_id = ? AND record_type = ? AND record_id = ?
-        ORDER BY created_at DESC
-    ''', (user_id, record_type, record_id))
+        return jsonify({'success': False, 'message': 'Укажите record, draft_key или batch_id'}), 400
+
     rows = [dict(r) for r in cursor.fetchall()]
     conn.close()
     return jsonify({'success': True, 'attachments': rows})
@@ -844,10 +945,9 @@ def upload_attachment():
     user_id = int(get_jwt_identity())
     record_type = request.form.get('record_type', '')
     record_id = request.form.get('record_id', type=int)
+    draft_key = request.form.get('draft_key', '').strip()
+    batch_id = request.form.get('batch_id', '').strip()
     file = request.files.get('file')
-
-    if record_type not in VALID_RECORD_TYPES or not record_id:
-        return jsonify({'success': False, 'message': 'Некорректная запись'}), 400
 
     err = validate_upload(file)
     if err:
@@ -855,33 +955,58 @@ def upload_attachment():
 
     conn = get_db()
     cursor = conn.cursor()
-    if not owns_record(cursor, user_id, record_type, record_id):
-        conn.close()
-        return jsonify({'success': False, 'message': 'Запись не найдена'}), 404
 
-    cursor.execute('''
-        SELECT COUNT(*) FROM attachments
-        WHERE user_id = ? AND record_type = ? AND record_id = ?
-    ''', (user_id, record_type, record_id))
-    if cursor.fetchone()[0] >= 10:
+    if draft_key:
+        target_filter = ('draft', draft_key)
+    elif batch_id:
+        if not owns_batch(cursor, user_id, batch_id):
+            conn.close()
+            return jsonify({'success': False, 'message': 'Комплекс не найден'}), 404
+        target_filter = ('batch', batch_id)
+    elif record_type in VALID_RECORD_TYPES and record_id:
+        if not owns_record(cursor, user_id, record_type, record_id):
+            conn.close()
+            return jsonify({'success': False, 'message': 'Запись не найдена'}), 404
+        target_filter = ('record', record_type, record_id)
+    else:
         conn.close()
-        return jsonify({'success': False, 'message': 'Не более 10 файлов на запись'}), 400
+        return jsonify({'success': False, 'message': 'Укажите draft_key, batch_id или запись'}), 400
+
+    if target_filter[0] == 'draft':
+        cnt = _attachment_count(cursor, user_id, draft_key=target_filter[1])
+    elif target_filter[0] == 'batch':
+        cnt = _attachment_count(cursor, user_id, batch_id=target_filter[1])
+    else:
+        cnt = _attachment_count(cursor, user_id, record_type=target_filter[1], record_id=target_filter[2])
+    if cnt >= 10:
+        conn.close()
+        return jsonify({'success': False, 'message': 'Не более 10 файлов'}), 400
 
     stored, _path = save_upload_file(file, user_id)
-    cursor.execute('''
-        INSERT INTO attachments (user_id, record_type, record_id, original_filename,
-                                 stored_filename, mime_type, size)
-        VALUES (?, ?, ?, ?, ?, ?, ?)
-    ''', (
-        user_id, record_type, record_id,
-        file.filename, stored, file.content_type or '', os.path.getsize(_path),
-    ))
+    if target_filter[0] == 'draft':
+        cursor.execute('''
+            INSERT INTO attachments (user_id, draft_key, original_filename,
+                                     stored_filename, mime_type, size)
+            VALUES (?, ?, ?, ?, ?, ?)
+        ''', (user_id, draft_key, file.filename, stored, file.content_type or '', os.path.getsize(_path)))
+    elif target_filter[0] == 'batch':
+        cursor.execute('''
+            INSERT INTO attachments (user_id, batch_id, original_filename,
+                                     stored_filename, mime_type, size)
+            VALUES (?, ?, ?, ?, ?, ?)
+        ''', (user_id, batch_id, file.filename, stored, file.content_type or '', os.path.getsize(_path)))
+    else:
+        cursor.execute('''
+            INSERT INTO attachments (user_id, record_type, record_id, original_filename,
+                                     stored_filename, mime_type, size)
+            VALUES (?, ?, ?, ?, ?, ?, ?)
+        ''', (
+            user_id, record_type, record_id, file.filename, stored,
+            file.content_type or '', os.path.getsize(_path),
+        ))
     conn.commit()
     aid = cursor.lastrowid
-    cursor.execute('''
-        SELECT id, original_filename, mime_type, size, created_at, record_type, record_id
-        FROM attachments WHERE id = ?
-    ''', (aid,))
+    cursor.execute('SELECT * FROM attachments WHERE id = ?', (aid,))
     row = dict(cursor.fetchone())
     conn.close()
     return jsonify({'success': True, 'attachment': row}), 201
@@ -940,7 +1065,7 @@ def admin_stats():
     cursor.execute('SELECT COUNT(*) as c FROM user_vaccinations')
     vaccinations_count = cursor.fetchone()['c']
     cursor.execute('''
-        SELECT id, full_name, email, role, email_verified, created_at FROM users
+        SELECT id, name, email, role, email_verified, created_at FROM users
         ORDER BY created_at DESC LIMIT 50
     ''')
     recent_users = [_public_user(r) for r in cursor.fetchall()]
@@ -1031,21 +1156,8 @@ def admin_delete_user(user_id):
     admin_id = int(get_jwt_identity())
     if user_id == admin_id:
         return jsonify({'success': False, 'message': 'Нельзя удалить себя'}), 400
-    conn = get_db()
-    cursor = conn.cursor()
-    cursor.execute('SELECT stored_filename FROM attachments WHERE user_id = ?', (user_id,))
-    for row in cursor.fetchall():
-        delete_stored_file(user_id, row['stored_filename'])
-    cursor.execute('DELETE FROM users WHERE id = ?', (user_id,))
-    deleted = cursor.rowcount
-    conn.commit()
-    conn.close()
-    if not deleted:
+    if not delete_user_account(user_id):
         return jsonify({'success': False, 'message': 'Пользователь не найден'}), 404
-    user_upload_dir = os.path.join(UPLOAD_DIR, str(user_id))
-    if os.path.isdir(user_upload_dir):
-        import shutil
-        shutil.rmtree(user_upload_dir, ignore_errors=True)
     return jsonify({'success': True})
 
 
@@ -1139,6 +1251,7 @@ def get_calendar_events():
                     'batch_id': batch_id,
                     'panel_id': items[0].get('panel_id'),
                     'panel_name': panel_name,
+                    'record_id': items[0]['id'],
                     'items': [
                         {
                             'id': it['id'],
@@ -1194,15 +1307,17 @@ def get_calendar_events():
 @app.route('/api/calendar/events', methods=['POST'])
 @jwt_required()
 def add_calendar_event():
+    import uuid as uuid_mod
     user_id = int(get_jwt_identity())
     data = request.get_json() or {}
     table = data.get('table')
-    title = data.get('title')
     event_date = data.get('date')
     description = data.get('description', '')
+    extra = data.get('extra') or {}
+    draft_key = (data.get('draft_key') or extra.get('draft_key') or '').strip()
 
-    if not all([table, title, event_date]):
-        return jsonify({'success': False, 'message': 'table, title и date обязательны'}), 400
+    if not table or not event_date:
+        return jsonify({'success': False, 'message': 'table и date обязательны'}), 400
     try:
         datetime.strptime(event_date, '%Y-%m-%d')
     except ValueError:
@@ -1210,36 +1325,84 @@ def add_calendar_event():
 
     conn = get_db()
     cursor = conn.cursor()
+    new_id = None
+    batch_id = None
+
     if table == 'appointments':
-        doctor_id, specialty = resolve_doctor(cursor, user_id, specialty=title)
-        if not specialty:
+        doctor_id, doc_name = resolve_doctor(
+            cursor, user_id,
+            doctor_id=extra.get('doctor_id') or data.get('doctor_id'),
+            name=data.get('title') or extra.get('doctor_name') or extra.get('type'),
+        )
+        if not doc_name:
             conn.close()
-            return jsonify({'success': False, 'message': 'Укажите специальность врача'}), 400
+            return jsonify({'success': False, 'message': 'Укажите врача'}), 400
         cursor.execute('''
-            INSERT INTO appointments (user_id, type, doctor_id, description, appointment_date)
-            VALUES (?, ?, ?, ?, ?)
-        ''', (user_id, specialty, doctor_id, description, event_date))
+            INSERT INTO appointments (user_id, type, doctor_id, description, appointment_date, diagnosis)
+            VALUES (?, ?, ?, ?, ?, ?)
+        ''', (user_id, doc_name, doctor_id, description, event_date, extra.get('diagnosis', '')))
+        new_id = cursor.lastrowid
+        link_draft_attachments(cursor, user_id, draft_key, 'appointments', new_id)
+
     elif table == 'analyses':
-        extra = data.get('extra', {})
+        if extra.get('panel_results'):
+            batch_id = str(uuid_mod.uuid4())
+            panel_id = extra.get('panel_id')
+            for r in extra['panel_results']:
+                if not r.get('type') or r.get('value') in (None, ''):
+                    continue
+                cursor.execute('''
+                    INSERT INTO analyses (user_id, type, analysis_date, unit, value, notes, panel_id, batch_id)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                ''', (
+                    user_id, r['type'].strip(), event_date,
+                    (r.get('unit') or '').strip(), str(r['value']).strip(),
+                    r.get('notes', description), panel_id, batch_id,
+                ))
+            link_draft_to_batch(cursor, user_id, draft_key, batch_id)
+            conn.commit()
+            conn.close()
+            return jsonify({
+                'success': True,
+                'message': 'Комплекс создан',
+                'id': f'panel_{batch_id}',
+                'batch_id': batch_id,
+            }), 201
+
+        analysis_type = (data.get('title') or extra.get('type') or '').strip()
+        if extra.get('catalog_id'):
+            cursor.execute('SELECT name, default_unit FROM analysis_catalog WHERE id = ?', (extra['catalog_id'],))
+            cat = cursor.fetchone()
+            if cat:
+                analysis_type = cat['name']
+                if not extra.get('unit'):
+                    extra['unit'] = cat['default_unit']
+        if not analysis_type:
+            conn.close()
+            return jsonify({'success': False, 'message': 'Укажите анализ'}), 400
         cursor.execute('''
             INSERT INTO analyses (user_id, type, analysis_date, unit, value, notes)
             VALUES (?, ?, ?, ?, ?, ?)
         ''', (
-            user_id, title, event_date,
+            user_id, analysis_type, event_date,
             extra.get('unit', ''), str(extra.get('value', '')), description,
         ))
+        new_id = cursor.lastrowid
+        link_draft_attachments(cursor, user_id, draft_key, 'analyses', new_id)
+
     elif table == 'user_vaccinations':
-        extra = data.get('extra', {})
+        custom = extra.get('custom_name') or data.get('title')
         cursor.execute('''
             INSERT INTO user_vaccinations (user_id, vaccine_id, date_given, notes, custom_name)
             VALUES (?, ?, ?, ?, ?)
-        ''', (user_id, extra.get('vaccine_id'), event_date, description, extra.get('custom_name')))
+        ''', (user_id, extra.get('vaccine_id'), event_date, description, custom))
+        new_id = cursor.lastrowid
+        link_draft_attachments(cursor, user_id, draft_key, 'user_vaccinations', new_id)
     else:
         conn.close()
         return jsonify({'success': False, 'message': 'Неизвестная таблица'}), 400
 
     conn.commit()
-    new_id = cursor.lastrowid
     conn.close()
     return jsonify({'success': True, 'message': 'Событие создано', 'id': f'{table}_{new_id}'}), 201
 

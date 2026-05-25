@@ -9,7 +9,7 @@ SECRET_KEY = os.getenv('SECRET_KEY', 'super-secret-med-key')
 JWT_ACCESS_TOKEN_EXPIRES_HOURS = int(os.getenv('JWT_EXPIRES_HOURS', '24'))
 
 # Почта: console — коды в консоль (для разработки), smtp — реальная отправка
-MAIL_MODE = os.getenv('MAIL_MODE', 'console').lower()
+MAIL_MODE = os.getenv('MAIL_MODE', 'smtp').lower()
 SMTP_HOST = os.getenv('SMTP_HOST', 'smtp.gmail.com')
 SMTP_PORT = int(os.getenv('SMTP_PORT', '587'))
 SMTP_USER = os.getenv('SMTP_USER', '')

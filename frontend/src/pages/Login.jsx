@@ -57,7 +57,7 @@ const Login = ({ onLogin }) => {
   return (
     <div className="auth-container">
       <div className="auth-card">
-        <h2>{tempToken ? 'Код 2FA' : 'Вход в МедДневник'}</h2>
+        <h2>{tempToken ? 'Код с почты' : 'Вход в МедДневник'}</h2>
         {error && <div className="error-message">{error}</div>}
         <form onSubmit={handleSubmit}>
           {!tempToken ? (
@@ -83,9 +83,9 @@ const Login = ({ onLogin }) => {
             </>
           ) : (
             <div className="form-group">
-              <h3>Код из приложения</h3>
+              <h3>Код из письма</h3>
               <p className="dashboard-subtitle">
-                Для {pendingUser?.email}
+                Код отправлен на {pendingUser?.email}
               </p>
               <input
                 value={code2fa}

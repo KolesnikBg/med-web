@@ -48,6 +48,8 @@ const Analysis = () => {
   const [modalItem, setModalItem] = useState(null);
   const [newCatalog, setNewCatalog] = useState({ name: '', default_unit: '' });
   const [newPanel, setNewPanel] = useState({ name: '', selectedIds: [] });
+  const [singleDraftKey, setSingleDraftKey] = useState(() => api.createDraftKey());
+  const [panelDraftKey, setPanelDraftKey] = useState(() => api.createDraftKey());
 
   const loadMeta = async () => {
     const [cat, pan, typesRes] = await Promise.all([
@@ -134,8 +136,9 @@ const Analysis = () => {
       if (editingId) {
         await api.updateAnalysis(editingId, form);
       } else {
-        const res = await api.createAnalysis(form);
+        const res = await api.createAnalysis({ ...form, draft_key: singleDraftKey });
         id = res.analysis?.id;
+        setSingleDraftKey(api.createDraftKey());
       }
       setActiveRecordId(id);
       setEditingId(id);
@@ -168,9 +171,11 @@ const Analysis = () => {
         analysis_date: panelDate,
         panel_id: panelId ? Number(panelId) : undefined,
         results,
+        draft_key: panelDraftKey,
       });
       setPanelRows([]);
       setPanelId('');
+      setPanelDraftKey(api.createDraftKey());
       await loadList();
       await loadMeta();
     } catch (err) {
@@ -279,7 +284,11 @@ const Analysis = () => {
                 Отмена
               </button>
             )}
-            <Attachments recordType="analyses" recordId={activeRecordId || editingId} />
+            <Attachments
+              recordType="analyses"
+              recordId={activeRecordId || editingId}
+              draftKey={mode === 'single' ? singleDraftKey : panelDraftKey}
+            />
           </form>
         ) : (
           <form onSubmit={handlePanelSubmit}>
@@ -318,6 +327,7 @@ const Analysis = () => {
                 ))}
               </div>
             )}
+            <Attachments recordType="analyses" draftKey={panelDraftKey} />
             <button type="submit" className="btn btn-primary" disabled={loading || !panelRows.length}>
               Сохранить комплекс
             </button>
@@ -413,7 +423,7 @@ const Analysis = () => {
         <h2>Записи</h2>
         <div className="filters">
           <div className="form-grid">
-            <label>Поиск по названию <input value={filters.search} onChange={(e) => setFilters({ ...filters, search: e.target.value })} /></label>
+            <label>Поиск по названию<input value={filters.search} onChange={(e) => setFilters({ ...filters, search: e.target.value })} /></label>
 
             <label>Поиск по типу<select value={filters.type} onChange={(e) => setFilters({ ...filters, type: e.target.value })}>
               <option value="">Все типы</option>
