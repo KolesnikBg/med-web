@@ -65,15 +65,15 @@ def seed_reference_data(cursor):
         flu = cursor.fetchone()
         if flu:
             cursor.execute('''
-                INSERT INTO vaccine_schedules (vaccine_id, schedule_type, interval_years, description)
-                VALUES (?, 'interval', 1, 'Ежегодная ревакцинация')
+                INSERT INTO vaccine_schedules (vaccine_id, schedule_type, interval_years)
+                VALUES (?, 'interval', 1)
             ''', (flu['id'],))
         cursor.execute("SELECT id FROM vaccines WHERE name = 'Столбняк'")
         tet = cursor.fetchone()
         if tet:
             cursor.execute('''
-                INSERT INTO vaccine_schedules (vaccine_id, schedule_type, interval_years, description)
-                VALUES (?, 'interval', 10, 'Ревакцинация каждые 10 лет')
+                INSERT INTO vaccine_schedules (vaccine_id, schedule_type, interval_years)
+                VALUES (?, 'interval', 10)
             ''', (tet['id'],))
 
 
@@ -493,15 +493,14 @@ def register_reference_routes(app):
             if not r.get('type') or r.get('value') in (None, ''):
                 continue
             cursor.execute('''
-                INSERT INTO analyses (user_id, type, analysis_date, unit, value, notes, panel_id, batch_id)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                INSERT INTO analyses (user_id, type, analysis_date, unit, value, panel_id, batch_id)
+                VALUES (?, ?, ?, ?, ?, ?, ?)
             ''', (
                 user_id,
                 r['type'].strip(),
                 analysis_date,
                 (r.get('unit') or '').strip(),
                 str(r['value']).strip(),
-                r.get('notes', ''),
                 panel_id,
                 batch_id,
             ))
@@ -602,14 +601,13 @@ def register_reference_routes(app):
         conn = get_db()
         cursor = conn.cursor()
         cursor.execute('''
-            INSERT INTO vaccine_schedules (vaccine_id, schedule_type, interval_years, age_years, description)
-            VALUES (?, ?, ?, ?, ?)
+            INSERT INTO vaccine_schedules (vaccine_id, schedule_type, interval_years, age_years)
+            VALUES (?, ?, ?, ?)
         ''', (
             vaccine_id,
             schedule_type,
             data.get('interval_years'),
             data.get('age_years'),
-            data.get('description', ''),
         ))
         conn.commit()
         sid = cursor.lastrowid

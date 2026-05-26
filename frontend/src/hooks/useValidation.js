@@ -59,6 +59,21 @@ export const validatePassword = (password) => {
   return '';
 };
 
+export const computeResetPasswordErrors = ({ code, newPassword, confirmPassword }) => {
+  const errors = {};
+  if (!code?.trim()) {
+    errors.code = 'Введите код из письма';
+  }
+  const pwdErr = validatePassword(newPassword);
+  if (pwdErr) errors.newPassword = pwdErr;
+  if (!confirmPassword) {
+    errors.confirmPassword = 'Подтвердите пароль';
+  } else if (newPassword !== confirmPassword) {
+    errors.confirmPassword = 'Пароли не совпадают';
+  }
+  return errors;
+};
+
 export const useValidation = (formData) => {
   const validate = () => {
     const errors = computeRegistrationErrors(formData);

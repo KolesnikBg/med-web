@@ -48,14 +48,16 @@ const VerifyEmail = ({ onLogin }) => {
     <div className="auth-container">
       <div className="auth-card">
         <h2>Подтверждение email</h2>
-        <p>Введите код из письма. В режиме разработки код также в консоли сервера.</p>
         {error && <div className="error-message">{error}</div>}
         {info && <p className="dashboard-subtitle">{info}</p>}
         <form onSubmit={handleSubmit}>
+        <div className="block">
           <div className="form-group">
             <h3>Email</h3>
-            <input type="email" value={email} onChange={(e) => setEmail(e.target.value)} required />
+            <input type="email" value={email} readOnly disabled className="input-readonly" required />
           </div>
+          </div>
+          <div className="block">
           <div className="form-group">
             <h3>Код</h3>
             <input
@@ -66,13 +68,16 @@ const VerifyEmail = ({ onLogin }) => {
               maxLength={6}
             />
           </div>
+          </div>
           <button type="submit" className="register-btn" disabled={loading}>
             {loading ? 'Проверка...' : 'Подтвердить'}
           </button>
         </form>
-        <button type="button" className="btn-link" onClick={handleResend}>
+        <div className="btn-center">
+        <button type="button" className="btn-req" onClick={handleResend}>
           Отправить код повторно
         </button>
+        </div>
         <div className="auth-links">
           <Link to="/login">К входу</Link>
         </div>

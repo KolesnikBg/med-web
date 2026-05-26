@@ -109,7 +109,7 @@ const Attachments = ({
         <h4>Фото и файлы</h4>
         {!disabled && (
           <label className="btn btn-upload">
-            📷 Добавить фото / файл
+            Добавить фото / файл
             <input
               type="file"
               hidden
@@ -140,13 +140,13 @@ const Attachments = ({
                 <div className="attachment-actions">
                   <button
                     type="button"
-                    className="btn-link"
+                    className="btn-download"
                     onClick={() => api.downloadAttachment(att.id, att.original_filename)}
                   >
                     Скачать
                   </button>
                   {!disabled && (
-                    <button type="button" className="btn-link" onClick={() => handleDelete(att.id)}>
+                    <button type="button" className="btn-delete-little" onClick={() => handleDelete(att.id)}>
                       Удалить
                     </button>
                   )}
@@ -158,7 +158,7 @@ const Attachments = ({
       )}
 
       {!items.length && !loading && (
-        <p className="empty-text">Нет вложений. Можно прикрепить до сохранения.</p>
+        <p className="empty-text">Нет вложений. Можно прикрепить файлы до 10МБ.</p>
       )}
     </div>
   );

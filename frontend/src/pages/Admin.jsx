@@ -1,6 +1,12 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import api from '../services/api';
 
+const VAC_CATEGORY_LABELS = {
+  standard: 'Стандартные',
+  travel: 'Для путешествий',
+  work: 'Профессиональные',
+};
+
 const TABS = [
   { id: 'stats', label: 'Статистика' },
   { id: 'doctors', label: 'Врачи' },
@@ -27,16 +33,16 @@ const Admin = () => {
   const [panelForm, setPanelForm] = useState({ name: '', description: '', catalog_ids: [] });
   const [editingPanelId, setEditingPanelId] = useState(null);
   const [editPanelForm, setEditPanelForm] = useState({ name: '', catalog_ids: [] });
-  const [vacForm, setVacForm] = useState({ name: '', description: '', category: 'standard' });
+  const [vacForm, setVacForm] = useState({ name: '', category: 'standard' });
   const [schedForm, setSchedForm] = useState({
     vaccine_id: '',
     schedule_type: 'interval',
     interval_years: 1,
     age_years: '',
-    description: '',
   });
   const [doctorSearch, setDoctorSearch] = useState('');
   const [catalogSearch, setCatalogSearch] = useState('');
+  const [panelSearch, setPanelSearch] = useState('');
   const [vaccineSearch, setVaccineSearch] = useState('');
   const [scheduleSearch, setScheduleSearch] = useState('');
 
@@ -54,11 +60,18 @@ const Admin = () => {
     );
   }, [catalog, catalogSearch]);
 
+  const filteredPanels = useMemo(() => {
+    const q = panelSearch.trim().toLowerCase();
+    if (!q) return panels;
+    return panels.filter((p) => p.name.toLowerCase().includes(q));
+  }, [panels, panelSearch]);
+
   const filteredVaccines = useMemo(() => {
     const q = vaccineSearch.trim().toLowerCase();
     if (!q) return vaccines;
     return vaccines.filter((v) =>
-      v.name.toLowerCase().includes(q) || (v.description || '').toLowerCase().includes(q)
+      v.name.toLowerCase().includes(q)
+      || (VAC_CATEGORY_LABELS[v.category] || v.category || '').toLowerCase().includes(q)
     );
   }, [vaccines, vaccineSearch]);
 
@@ -66,8 +79,7 @@ const Admin = () => {
     const q = scheduleSearch.trim().toLowerCase();
     if (!q) return schedules;
     return schedules.filter((s) =>
-      (s.vaccine_name || '').toLowerCase().includes(q) ||
-      (s.description || '').toLowerCase().includes(q)
+      (s.vaccine_name || '').toLowerCase().includes(q)
     );
   }, [schedules, scheduleSearch]);
 
@@ -140,7 +152,7 @@ const Admin = () => {
                   <td>{u.email}</td>
                   <td>
                     {!u.is_admin && (
-                      <button type="button" className="btn-link" onClick={async () => {
+                      <button type="button" className="btn-delete" onClick={async () => {
                         await api.adminDeleteUser(u.id);
                         load();
                       }}>Удалить</button>
@@ -172,7 +184,7 @@ const Admin = () => {
             {filteredDoctors.map((d) => (
               <li key={d.id}>
                 {d.name}
-                <button type="button" className="btn-link" onClick={async () => { await api.adminDeleteDoctor(d.id); load(); }}>Удалить</button>
+                <button type="button" className="btn-delete" onClick={async () => { await api.adminDeleteDoctor(d.id); load(); }}>Удалить</button>
               </li>
             ))}
           </ul>
@@ -198,7 +210,7 @@ const Admin = () => {
           <ul className="simple-list">
             {filteredCatalog.map((c) => (
               <li key={c.id}>{c.name} — {c.default_unit || '—'}
-                <button type="button" className="btn-link" onClick={async () => { await api.adminDeleteCatalogItem(c.id); load(); }}>Скрыть</button>
+                <button type="button" className="btn-delete-1" onClick={async () => { await api.adminDeleteCatalogItem(c.id); load(); }}>Скрыть</button>
               </li>
             ))}
           </ul>
@@ -207,6 +219,10 @@ const Admin = () => {
 
       {tab === 'panels' && (
         <section className="card">
+          <label className="admin-search">
+            Поиск по панелям
+            <input value={panelSearch} onChange={(e) => setPanelSearch(e.target.value)} placeholder="Название комплекса..." />
+          </label>
           <h3>Новая панель (комплекс)</h3>
           <input placeholder="Название панели" value={panelForm.name} onChange={(e) => setPanelForm({ ...panelForm, name: e.target.value })} />
           <p className="page-lead">Отметьте анализы, входящие в комплекс:</p>
@@ -239,13 +255,13 @@ const Admin = () => {
             Создать панель
           </button>
           <ul className="simple-list">
-            {panels.map((p) => (
+            {filteredPanels.map((p) => (
               <li key={p.id}>
                 {p.name}
                 <span className="simple-list-actions">
                   <button
                     type="button"
-                    className="btn-link"
+                    className="btn-edit-1"
                     onClick={async () => {
                       const res = await api.getAnalysisPanel(p.id);
                       const ids = (res.panel?.items || [])
@@ -259,7 +275,7 @@ const Admin = () => {
                   </button>
                   <button
                     type="button"
-                    className="btn-link"
+                    className="btn-delete"
                     onClick={async () => {
                       if (!window.confirm(`Удалить панель «${p.name}»?`)) return;
                       await api.adminDeletePanel(p.id);
@@ -336,7 +352,7 @@ const Admin = () => {
           <form className="form-inline" onSubmit={async (e) => {
             e.preventDefault();
             await api.adminCreateVaccine(vacForm);
-            setVacForm({ name: '', description: '', category: 'standard' });
+            setVacForm({ name: '', category: 'standard' });
             load();
           }}>
             <input placeholder="Название" value={vacForm.name} onChange={(e) => setVacForm({ ...vacForm, name: e.target.value })} required />
@@ -347,13 +363,22 @@ const Admin = () => {
             </select>
             <button type="submit" className="btn btn-primary">Добавить</button>
           </form>
-          <ul className="simple-list">
-            {filteredVaccines.map((v) => (
-              <li key={v.id}>{v.name}
-                <button type="button" className="btn-link" onClick={async () => { await api.adminDeleteVaccine(v.id); load(); }}>Удалить</button>
-              </li>
-            ))}
-          </ul>
+          <table className="data-table">
+            <thead>
+              <tr><th>Название</th><th>Категория</th><th></th></tr>
+            </thead>
+            <tbody>
+              {filteredVaccines.map((v) => (
+                <tr key={v.id}>
+                  <td>{v.name}</td>
+                  <td>{VAC_CATEGORY_LABELS[v.category] || v.category || '—'}</td>
+                  <td>
+                    <button type="button" className="btn-delete" onClick={async () => { await api.adminDeleteVaccine(v.id); load(); }}>Удалить</button>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
         </section>
       )}
 
@@ -361,7 +386,7 @@ const Admin = () => {
         <section className="card">
           <label className="admin-search">
             Поиск по периодизации
-            <input value={scheduleSearch} onChange={(e) => setScheduleSearch(e.target.value)} placeholder="Прививка, описание..." />
+            <input value={scheduleSearch} onChange={(e) => setScheduleSearch(e.target.value)} placeholder="Название прививки..." />
           </label>
           <form className="form-grid" onSubmit={async (e) => {
             e.preventDefault();
@@ -370,7 +395,6 @@ const Admin = () => {
               schedule_type: schedForm.schedule_type,
               interval_years: schedForm.schedule_type === 'interval' ? Number(schedForm.interval_years) : null,
               age_years: schedForm.schedule_type === 'age' ? Number(schedForm.age_years) : null,
-              description: schedForm.description,
             });
             load();
           }}>
@@ -399,12 +423,9 @@ const Admin = () => {
                 <input type="number" min={0} value={schedForm.age_years} onChange={(e) => setSchedForm({ ...schedForm, age_years: e.target.value })} />
               </label>
             )}
-            <label className="span-2">
-              Описание
-              <input value={schedForm.description} onChange={(e) => setSchedForm({ ...schedForm, description: e.target.value })} />
-            </label>
-            <button type="submit" className="btn btn-primary">Добавить правило</button>
+            
           </form>
+          <button type="submit" className="btn btn-primary">Добавить правило</button>
           <table className="data-table">
             <thead>
               <tr><th>Прививка</th><th>Тип</th><th>Параметр</th><th></th></tr>
@@ -416,7 +437,7 @@ const Admin = () => {
                   <td>{s.schedule_type === 'interval' ? 'Интервал' : 'Возраст'}</td>
                   <td>{s.schedule_type === 'interval' ? `${s.interval_years} лет` : `${s.age_years} лет`}</td>
                   <td>
-                    <button type="button" className="btn-link" onClick={async () => {
+                    <button type="button" className="btn-delete" onClick={async () => {
                       await api.adminDeleteVaccineSchedule(s.id);
                       load();
                     }}>Удалить</button>

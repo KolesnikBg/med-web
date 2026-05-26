@@ -1,31 +1,29 @@
 import React from 'react';
 import './Footer.css';
 
-// для небольших буду использовать константы (аноним ф.)
 const Footer = () => {
   return (
     <footer className="footer">
       <div className="footer-content">
         <div className="footer-section">
-          <h4>МедКнижка</h4>
+          <h4>МедДневник</h4>
           <p>Ваш личный медицинский помощник</p>
         </div>
 
         <div className="footer-section">
           <h4>Контакты</h4>
-          <p>Email: medbook@gmail.ru</p>
-          <p>Телефон: 8-800-333-35-35</p>
+          <p>Email: bogdan20031124@gmail.com</p>
         </div>
 
         <div className="footer-section">
           <h4>Безопасность</h4>
-          <p>Все данные защищены</p>
+          <a href="/agreement" className="link-agreement">Политика обработки персональных данных↗️</a>
           <p>Используется безопасное соединение</p>
         </div>
       </div>
 
       <div className="footer-bottom">
-        <p>2026 МедДневник. Все права защищены.</p>
+        <p>2026 МедДневник</p>
       </div>
     </footer>
   );

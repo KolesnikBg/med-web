@@ -13,13 +13,15 @@ import Attachments from '../Attachments';
 const EVENT_TYPES = {
     APPOINTMENT: 'appointments',
     ANALYSIS: 'analyses',
-    VACCINATION: 'user_vaccinations'
+    ANALYSIS_PANEL: 'analysis_panel',
+    VACCINATION: 'user_vaccinations',
 };
 
 const TYPE_LABELS = {
     [EVENT_TYPES.APPOINTMENT]: 'Приём',
     [EVENT_TYPES.ANALYSIS]: 'Анализ',
-    [EVENT_TYPES.VACCINATION]: 'Прививка'
+    [EVENT_TYPES.ANALYSIS_PANEL]: 'Комплекс анализов',
+    [EVENT_TYPES.VACCINATION]: 'Прививка',
 };
 
 const parseRecordId = (idStr) => {
@@ -69,7 +71,6 @@ const Calendar = () => {
     const [catalog, setCatalog] = useState([]);
     const [panels, setPanels] = useState([]);
     const [draftKey, setDraftKey] = useState(() => api.createDraftKey());
-    const [useCustomDoctor, setUseCustomDoctor] = useState(false);
     const [analysisMode, setAnalysisMode] = useState('catalog');
     const [panelRows, setPanelRows] = useState([]);
 
@@ -120,6 +121,10 @@ const Calendar = () => {
     // === Обработчики формы ===
 
     const handleFormChange = (field, value) => {
+        if (field === 'table') {
+            setAnalysisMode(value === EVENT_TYPES.ANALYSIS_PANEL ? 'panel' : 'catalog');
+            setPanelRows([]);
+        }
         setFormData(prev => ({ ...prev, [field]: value }));
     };
 
@@ -139,7 +144,6 @@ const Calendar = () => {
             extra: {}
         });
         setAttachmentRecordId(null);
-        setUseCustomDoctor(false);
         setAnalysisMode('catalog');
         setPanelRows([]);
     };
@@ -163,7 +167,6 @@ const Calendar = () => {
             type: it.item_name,
             unit: it.default_unit || it.catalog_unit || '',
             value: '',
-            notes: '',
         })));
     };
 
@@ -184,7 +187,6 @@ const Calendar = () => {
                 type: it.type,
                 unit: it.unit || '',
                 value: String(it.value ?? '').replace(/,/g, '.').split(/\s/)[0] || it.value,
-                notes: it.notes || '',
             })));
             setFormData({
                 table: EVENT_TYPES.ANALYSIS,
@@ -224,30 +226,38 @@ const Calendar = () => {
 
         try {
             if (formMode === 'create') {
+                const skipNotes = formData.table === EVENT_TYPES.ANALYSIS
+                    || formData.table === EVENT_TYPES.ANALYSIS_PANEL;
                 const payload = {
                     table: formData.table,
                     date: formData.date,
-                    description: formData.description,
                     draft_key: draftKey,
                     extra: { ...formData.extra, draft_key: draftKey },
                 };
+                if (!skipNotes) {
+                    payload.description = formData.description;
+                }
                 if (formData.table === EVENT_TYPES.APPOINTMENT) {
-                    if (useCustomDoctor) {
-                        payload.title = formData.extra.custom_doctor || formData.title;
-                    } else {
+                    if (formData.extra.doctor_id) {
                         payload.extra.doctor_id = formData.extra.doctor_id;
                         const doc = doctors.find((d) => String(d.id) === String(formData.extra.doctor_id));
                         payload.title = doc?.name || formData.title;
+                    } else {
+                        payload.title = formData.extra.custom_doctor || formData.title;
                     }
+                } else if (
+                    formData.table === EVENT_TYPES.ANALYSIS_PANEL
+                    || (formData.table === EVENT_TYPES.ANALYSIS && analysisMode === 'panel')
+                ) {
+                    payload.table = EVENT_TYPES.ANALYSIS;
+                    payload.extra = {
+                        ...payload.extra,
+                        panel_id: formData.extra.panel_id ? Number(formData.extra.panel_id) : null,
+                        panel_results: panelRows.filter((r) => r.value !== '' && r.value != null),
+                    };
+                    payload.title = panels.find((p) => String(p.id) === String(formData.extra.panel_id))?.name || 'Комплекс';
                 } else if (formData.table === EVENT_TYPES.ANALYSIS) {
-                    if (analysisMode === 'panel') {
-                        payload.extra = {
-                            ...payload.extra,
-                            panel_id: formData.extra.panel_id ? Number(formData.extra.panel_id) : null,
-                            panel_results: panelRows.filter((r) => r.value !== '' && r.value != null),
-                        };
-                        payload.title = panels.find((p) => String(p.id) === String(formData.extra.panel_id))?.name || 'Комплекс';
-                    } else if (analysisMode === 'catalog') {
+                    if (analysisMode === 'catalog') {
                         payload.extra.catalog_id = formData.extra.catalog_id;
                         payload.title = formData.title;
                     } else {
@@ -264,26 +274,30 @@ const Calendar = () => {
                             analysis_date: formData.date,
                             value: row.value,
                             unit: row.unit,
-                            notes: row.notes || formData.description,
                         })
                     )
                 );
             } else {
+                const updates = {
+                    [formData.table === EVENT_TYPES.APPOINTMENT ? 'type' :
+                        formData.table === EVENT_TYPES.ANALYSIS ? 'type' : 'custom_name']: formData.title,
+                    [formData.table === EVENT_TYPES.APPOINTMENT ? 'appointment_date' :
+                        formData.table === EVENT_TYPES.ANALYSIS ? 'analysis_date' : 'date_given']: formData.date,
+                    ...(formData.table === EVENT_TYPES.ANALYSIS && {
+                        unit: formData.extra.unit,
+                        value: formData.extra.value,
+                    }),
+                };
+                if (formData.table !== EVENT_TYPES.ANALYSIS) {
+                    updates.description = formData.description;
+                    if (formData.table === EVENT_TYPES.VACCINATION) {
+                        updates.notes = formData.description;
+                    }
+                }
                 await api.updateCalendarEvent(
                     formData.table,
                     selectedEvent.recordId,
-                    {
-                        [formData.table === EVENT_TYPES.APPOINTMENT ? 'type' :
-                            formData.table === EVENT_TYPES.ANALYSIS ? 'type' : 'custom_name']: formData.title,
-                        [formData.table === EVENT_TYPES.APPOINTMENT ? 'appointment_date' :
-                            formData.table === EVENT_TYPES.ANALYSIS ? 'analysis_date' : 'date_given']: formData.date,
-                        description: formData.description,
-                        notes: formData.description,
-                        ...(formData.table === EVENT_TYPES.ANALYSIS && {
-                            unit: formData.extra.unit,
-                            value: formData.extra.value,
-                        }),
-                    }
+                    updates,
                 );
             }
 
@@ -357,7 +371,7 @@ const Calendar = () => {
     if (error) {
         return (
             <div className="calendar-error">
-                <p>❌ {error}</p>
+                <p> {error}</p>
                 <button onClick={fetchEvents}>Обновить</button>
             </div>
         );
@@ -366,7 +380,7 @@ const Calendar = () => {
     return (
         <div className="calendar-wrapper">
             <div className="calendar-header">
-                <h2>📅 Календарь здоровья</h2>
+                <h2>Календарь записей</h2>
                 <div className="calendar-legend">
                     <span className="legend-item"><span className="dot appointment"></span>Приёмы</span>
                     <span className="legend-item"><span className="dot analysis"></span>Анализы</span>
@@ -416,8 +430,11 @@ const Calendar = () => {
                     if (viewName !== currentView) handleViewChange(viewName);
                 }}
                 eventDidMount={(info) => {
-                    if (info.event.extendedProps.description) {
-                        info.el.title = info.event.extendedProps.description;
+                    const props = info.event.extendedProps;
+                    if (props.is_panel_group) {
+                        info.el.title = props.panel_name || info.event.title;
+                    } else if (props.description) {
+                        info.el.title = props.description;
                     }
                 }}
                 dateClick={(info) => {
@@ -450,7 +467,9 @@ const Calendar = () => {
                             {selectedEvent.extra.diagnosis && (
                                 <p><strong>Диагноз:</strong> {selectedEvent.extra.diagnosis}</p>
                             )}
-                            {selectedEvent.description && (
+                            {selectedEvent.description
+                                && selectedEvent.table !== EVENT_TYPES.ANALYSIS
+                                && selectedEvent.table !== EVENT_TYPES.ANALYSIS_PANEL && (
                                 <p><strong>Заметки:</strong> {selectedEvent.description}</p>
                             )}
                             {selectedEvent.extra.is_panel_group ? (
@@ -470,10 +489,10 @@ const Calendar = () => {
                             <button type="button" className="btn-edit" onClick={() => openEditForm(selectedEvent)}>
                                 Редактировать
                             </button>
-                            <button type="button" onClick={() => setShowViewModal(false)}>Закрыть</button>
                             <button type="button" className="btn-delete" onClick={handleDeleteEvent}>
                                 Удалить
                             </button>
+                            <button type="button" onClick={() => setShowViewModal(false)}>Закрыть</button>
                         </div>
                     </div>
                 </div>
@@ -504,40 +523,41 @@ const Calendar = () => {
                             )}
 
                             {formData.table === EVENT_TYPES.APPOINTMENT && formMode === 'create' && (
-                                <div className="form-group">
-                                    <label className="checkbox-row">
-                                        <input
-                                            type="checkbox"
-                                            checked={useCustomDoctor}
-                                            onChange={(e) => setUseCustomDoctor(e.target.checked)}
-                                        />
-                                        Свой врач (не из списка)
-                                    </label>
-                                    {useCustomDoctor ? (
-                                        <input
-                                            type="text"
-                                            placeholder="Терапевт, кардиолог..."
-                                            value={formData.extra.custom_doctor || ''}
-                                            onChange={(e) => handleExtraChange('custom_doctor', e.target.value)}
-                                            required
-                                        />
-                                    ) : (
+                                <>
+                                    <div className="form-group">
+                                        <label>Специальность</label>
                                         <select
                                             value={formData.extra.doctor_id || ''}
-                                            onChange={(e) => handleExtraChange('doctor_id', e.target.value)}
-                                            required
+                                            onChange={(e) => {
+                                                handleExtraChange('doctor_id', e.target.value);
+                                                if (e.target.value) handleExtraChange('custom_doctor', '');
+                                            }}
                                         >
-                                            <option value="">— выберите врача —</option>
+                                            <option value="">— выберите —</option>
                                             {doctors.map((d) => (
                                                 <option key={d.id} value={d.id}>{d.name}</option>
                                             ))}
                                         </select>
+                                    </div>
+                                    {!formData.extra.doctor_id && (
+                                        <div className="form-group">
+                                            <label>Или специальность *</label>
+                                            <input
+                                                type="text"
+                                                placeholder="Терапевт, кардиолог..."
+                                                value={formData.extra.custom_doctor || ''}
+                                                onChange={(e) => handleExtraChange('custom_doctor', e.target.value)}
+                                                required
+                                            />
+                                        </div>
                                     )}
-                                </div>
+                                </>
                             )}
 
-                            {formData.table === EVENT_TYPES.ANALYSIS && formMode === 'create' && (
+                            {(formData.table === EVENT_TYPES.ANALYSIS_PANEL
+                                || (formData.table === EVENT_TYPES.ANALYSIS && formMode === 'create')) && (
                                 <>
+                                    {formData.table === EVENT_TYPES.ANALYSIS && (
                                     <div className="form-group">
                                         <label>Тип записи</label>
                                         <select
@@ -549,9 +569,9 @@ const Calendar = () => {
                                         >
                                             <option value="catalog">Из справочника</option>
                                             <option value="custom">Свой анализ</option>
-                                            <option value="panel">Комплекс (панель)</option>
                                         </select>
                                     </div>
+                                    )}
                                     {analysisMode === 'catalog' && (
                                         <div className="form-group">
                                             <label>Анализ *</label>
@@ -578,7 +598,7 @@ const Calendar = () => {
                                             />
                                         </div>
                                     )}
-                                    {analysisMode === 'panel' && (
+                                    {(formData.table === EVENT_TYPES.ANALYSIS_PANEL || analysisMode === 'panel') && (
                                         <>
                                             <div className="form-group">
                                                 <label>Панель *</label>
@@ -721,20 +741,22 @@ const Calendar = () => {
                                 </>
                             )}
 
-                            {/* Описание / Заметки */}
-                            <div className="form-group">
-                                <label>Заметки</label>
-                                <textarea
-                                    rows="3"
-                                    value={formData.description}
-                                    onChange={(e) => handleFormChange('description', e.target.value)}
-                                    placeholder={
-                                        formData.table === EVENT_TYPES.APPOINTMENT ? 'Диагноз, рекомендации...' :
-                                            formData.table === EVENT_TYPES.ANALYSIS ? 'Комментарий к результату...' :
-                                                'Место, реакция, серия...'
-                                    }
-                                />
-                            </div>
+                            {formData.table !== EVENT_TYPES.ANALYSIS
+                                && formData.table !== EVENT_TYPES.ANALYSIS_PANEL && (
+                                <div className="form-group">
+                                    <label>Заметки</label>
+                                    <textarea
+                                        rows="3"
+                                        value={formData.description}
+                                        onChange={(e) => handleFormChange('description', e.target.value)}
+                                        placeholder={
+                                            formData.table === EVENT_TYPES.APPOINTMENT
+                                                ? 'Диагноз, рекомендации...'
+                                                : 'Место, реакция, серия...'
+                                        }
+                                    />
+                                </div>
+                            )}
 
                             {formMode === 'create' && (
                                 <Attachments draftKey={draftKey} compact />

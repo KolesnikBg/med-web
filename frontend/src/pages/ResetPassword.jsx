@@ -1,7 +1,7 @@
-import React, { useState } from 'react';
+import React, { useMemo, useState } from 'react';
 import { Link, useNavigate, useLocation } from 'react-router-dom';
 import api from '../services/api';
-import { validatePassword } from '../hooks/useValidation';
+import { computeResetPasswordErrors } from '../hooks/useValidation';
 import '../styles/register.css';
 
 const ResetPassword = () => {
@@ -13,26 +13,40 @@ const ResetPassword = () => {
   const [confirmPassword, setConfirmPassword] = useState('');
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
+  const [touched, setTouched] = useState({});
+
+  const form = { code, newPassword, confirmPassword };
+  const clientErrors = useMemo(() => computeResetPasswordErrors(form), [form]);
+  const formValid = Object.keys(clientErrors).length === 0;
+  const canSubmit = formValid && Boolean(emailFromState) && !loading;
+
+  const markTouched = (name) => setTouched((prev) => ({ ...prev, [name]: true }));
+
+  const getFieldClass = (name) => {
+    if (!touched[name]) return '';
+    return clientErrors[name] ? 'field-input-invalid' : 'field-input-valid';
+  };
+
+  const renderFieldError = (name) => {
+    if (!touched[name]) {
+      return <span className="field-error field-error--placeholder" aria-hidden="true" />;
+    }
+    const msg = clientErrors[name];
+    return msg ? (
+      <span className="field-error">{msg}</span>
+    ) : (
+      <span className="field-error field-error--placeholder" aria-hidden="true" />
+    );
+  };
 
   const handleSubmit = async (e) => {
     e.preventDefault();
+    setTouched({ code: true, newPassword: true, confirmPassword: true });
+    if (!formValid || !emailFromState) return;
     setError('');
-    const pwdErr = validatePassword(newPassword);
-    if (pwdErr) {
-      setError(pwdErr);
-      return;
-    }
-    if (newPassword !== confirmPassword) {
-      setError('Пароли не совпадают');
-      return;
-    }
-    if (!emailFromState) {
-      setError('Сначала запросите код на странице сброса пароля');
-      return;
-    }
     setLoading(true);
     try {
-      await api.resetPassword(emailFromState, code, newPassword);
+      await api.resetPassword(emailFromState, code.trim(), newPassword);
       navigate('/login');
     } catch (err) {
       setError(err.message);
@@ -54,39 +68,61 @@ const ResetPassword = () => {
 
   return (
     <div className="auth-container">
-      <div className="auth-card">
+      <div className="auth-card auth-card--register">
         <h2>Новый пароль</h2>
         {error && <div className="error-message">{error}</div>}
-        <form onSubmit={handleSubmit}>
+        <form onSubmit={handleSubmit} noValidate className="register-form">
+        <div className="block">
           <div className="form-group">
             <h3>Email</h3>
             <input type="email" value={emailFromState} readOnly disabled className="input-readonly" />
           </div>
+          </div>
+          <div className="block">
           <div className="form-group">
             <h3>Код из письма</h3>
-            <input value={code} onChange={(e) => setCode(e.target.value)} required />
+            <input
+              value={code}
+              onChange={(e) => { setCode(e.target.value); markTouched('code'); setError(''); }}
+              onBlur={() => markTouched('code')}
+              placeholder="000000"
+              maxLength={6}
+              className={getFieldClass('code')}
+              required
+            />
+            {renderFieldError('code')}
+            </div>
           </div>
+          <div className="block">
           <div className="form-group">
             <h3>Новый пароль</h3>
             <input
               type="password"
               value={newPassword}
-              onChange={(e) => setNewPassword(e.target.value)}
+              onChange={(e) => { setNewPassword(e.target.value); markTouched('newPassword'); setError(''); }}
+              onBlur={() => markTouched('newPassword')}
+              className={getFieldClass('newPassword')}
               required
             />
-            <small className="field-hint">Минимум 6 символов, буквы и цифры</small>
+            {renderFieldError('newPassword')}
           </div>
+          </div>
+          <div className="block">
           <div className="form-group">
             <h3>Подтверждение</h3>
             <input
               type="password"
               value={confirmPassword}
-              onChange={(e) => setConfirmPassword(e.target.value)}
+              onChange={(e) => { setConfirmPassword(e.target.value); markTouched('confirmPassword'); setError(''); }}
+              onBlur={() => markTouched('confirmPassword')}
+              className={getFieldClass('confirmPassword')}
               required
             />
+            {renderFieldError('confirmPassword')}
           </div>
-          <button type="submit" className="register-btn" disabled={loading}>
-            Сохранить
+          </div>
+          <button type="submit" className="register-btn" disabled={!canSubmit}>
+            {loading ? 'Сохранение...' : 'Сохранить'}
           </button>
         </form>
         <div className="auth-links">

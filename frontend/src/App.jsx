@@ -13,6 +13,7 @@ import Vaccinations from './pages/Vaccinations';
 import Admin from './pages/Admin';
 import Header from './components/Header';
 import Footer from './components/Footer';
+import Agreement from './pages/Agreement';
 import './styles/global.css';
 import api from './services/api';
 
@@ -68,6 +69,7 @@ function App() {
         )}
         <div className="main-content">
           <Routes>
+            <Route path="/agreement" element={<Agreement />} />
             <Route path="/login" element={!isAuthenticated ? <Login onLogin={handleLogin} /> : <Navigate to="/" />} />
             <Route path="/register" element={!isAuthenticated ? <Register /> : <Navigate to="/" />} />
             <Route path="/verify-email" element={!isAuthenticated ? <VerifyEmail onLogin={handleLogin} /> : <Navigate to="/" />} />

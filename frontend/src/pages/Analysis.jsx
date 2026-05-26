@@ -20,7 +20,7 @@ const parseNumeric = (val) => {
   return m ? parseFloat(m[0]) : null;
 };
 
-const emptyFilters = { type: '', search: '', date_from: '', date_to: '' };
+const emptyFilters = { type: '', search: '', panel_search: '', date_from: '', date_to: '' };
 
 const buildListItems = (analyses, panels) => {
   const batchMap = new Map();
@@ -57,7 +57,6 @@ const Analysis = () => {
     analysis_date: '',
     unit: '',
     value: '',
-    notes: '',
   });
   const [panelId, setPanelId] = useState('');
   const [panelDate, setPanelDate] = useState('');
@@ -86,12 +85,22 @@ const Analysis = () => {
   );
 
   const listItems = useMemo(() => {
-    if (listFilter === 'panels') return panelGroups;
-    if (listFilter === 'singles') return singles;
-    return allListItems.sort((a, b) =>
-      (b.analysis_date || '').localeCompare(a.analysis_date || '')
-    );
-  }, [listFilter, panelGroups, singles, allListItems]);
+    let items;
+    if (listFilter === 'panels') items = panelGroups;
+    else if (listFilter === 'singles') items = singles;
+    else {
+      items = allListItems.sort((a, b) =>
+        (b.analysis_date || '').localeCompare(a.analysis_date || '')
+      );
+    }
+    const panelQ = (filters.panel_search || '').trim().toLowerCase();
+    if (panelQ) {
+      items = items.filter((item) =>
+        item.is_panel_group && (item.panel_name || '').toLowerCase().includes(panelQ)
+      );
+    }
+    return items;
+  }, [listFilter, panelGroups, singles, allListItems, filters.panel_search]);
 
   const catalogSelected = catalog.some((c) => c.name === form.type);
 
@@ -163,7 +172,6 @@ const Analysis = () => {
           type: it.item_name,
           unit: it.default_unit || it.catalog_unit || '',
           value: '',
-          notes: '',
         }))
       );
     } catch (err) {
@@ -172,7 +180,7 @@ const Analysis = () => {
   };
 
   const resetCreateForm = () => {
-    setForm({ type: '', analysis_date: '', unit: '', value: '', notes: '' });
+    setForm({ type: '', analysis_date: '', unit: '', value: '' });
     setSingleDraftKey(api.createDraftKey());
   };
 
@@ -239,7 +247,6 @@ const Analysis = () => {
     if (item.is_panel_group) {
       setEditForm({
         analysis_date: item.analysis_date,
-        notes: '',
       });
       setEditPanelRows(
         item.items.map((a) => ({
@@ -247,7 +254,6 @@ const Analysis = () => {
           type: a.type,
           unit: a.unit,
           value: a.value,
-          notes: a.notes || '',
         }))
       );
     } else {
@@ -256,7 +262,6 @@ const Analysis = () => {
         analysis_date: item.analysis_date,
         unit: item.unit,
         value: item.value,
-        notes: item.notes || '',
       });
       setEditPanelRows([]);
     }
@@ -273,7 +278,6 @@ const Analysis = () => {
               analysis_date: editForm.analysis_date,
               value: row.value,
               unit: row.unit,
-              notes: row.notes || editForm.notes,
             })
           )
         );
@@ -479,7 +483,7 @@ const Analysis = () => {
           />
           <button
             type="button"
-            className="btn btn-secondary"
+            className="btn btn-primary"
             onClick={async () => {
               await api.createAnalysisCatalogItem(newCatalog);
               setNewCatalog({ name: '', default_unit: '' });
@@ -514,7 +518,7 @@ const Analysis = () => {
         </div>
         <button
           type="button"
-          className="btn btn-secondary"
+          className="btn btn-primary"
           onClick={async () => {
             const items = newPanel.selectedIds.map((id) => {
               const c = catalog.find((x) => x.id === id);
@@ -545,6 +549,7 @@ const Analysis = () => {
         <div className="filters">
           <div className="form-grid">
             <label>Поиск по названию<input value={filters.search} onChange={(e) => setFilters({ ...filters, search: e.target.value })} /></label>
+            <label>Поиск по комплексу/панели<input value={filters.panel_search} onChange={(e) => setFilters({ ...filters, panel_search: e.target.value })} placeholder="Название панели..." /></label>
             <label>Поиск по типу<select value={filters.type} onChange={(e) => setFilters({ ...filters, type: e.target.value })}>
               <option value="">Все типы</option>
               {typeOptions.map((t) => (
@@ -554,7 +559,7 @@ const Analysis = () => {
             <label>Дата с<input type="date" value={filters.date_from} onChange={(e) => setFilters({ ...filters, date_from: e.target.value })} /></label>
             <label>Дата по<input type="date" value={filters.date_to} onChange={(e) => setFilters({ ...filters, date_to: e.target.value })} /></label>
           </div>
-          <button type="button" className="btn btn-secondary" onClick={() => setFilters(emptyFilters)}>
+          <button type="button" className="btn btn-primary" onClick={() => setFilters(emptyFilters)}>
             Сброс
           </button>
         </div>

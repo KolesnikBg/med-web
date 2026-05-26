@@ -4,14 +4,18 @@ import api from '../services/api';
 import '../styles/register.css';
 
 const Login = ({ onLogin }) => {
-  const [email, setEmail] = useState('demo@example.com');
-  const [password, setPassword] = useState('demo123');
+  const [email, setEmail] = useState('');
+  const [password, setPassword] = useState('');
   const [code2fa, setCode2fa] = useState('');
   const [tempToken, setTempToken] = useState(null);
   const [pendingUser, setPendingUser] = useState(null);
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
   const navigate = useNavigate();
+
+  //   const clientErrors = useMemo(() => computeRegistrationErrors(formData), [formData]);
+  // const formValid = useMemo(() => Object.keys(clientErrors).length === 0, [clientErrors]);
+  const canSubmit = !loading;
 
   const handleSubmit = async (e) => {
     e.preventDefault();
@@ -68,6 +72,7 @@ const Login = ({ onLogin }) => {
         <form onSubmit={handleSubmit}>
           {!tempToken ? (
             <>
+            <div className="block">
               <div className="form-group">
                 <h3>Эл. почта</h3>
                 <input
@@ -77,6 +82,8 @@ const Login = ({ onLogin }) => {
                   required
                 />
               </div>
+              </div>
+              <div className="block">
               <div className="form-group">
                 <h3>Пароль</h3>
                 <input
@@ -85,6 +92,7 @@ const Login = ({ onLogin }) => {
                   onChange={(e) => setPassword(e.target.value)}
                   required
                 />
+              </div>
               </div>
             </>
           ) : (
@@ -101,7 +109,7 @@ const Login = ({ onLogin }) => {
               />
             </div>
           )}
-          <button type="submit" disabled={loading} className="register-btn">
+          <button type="submit" disabled={!canSubmit}className="register-btn">
             {loading ? '...' : tempToken ? 'Подтвердить' : 'Войти'}
           </button>
         </form>

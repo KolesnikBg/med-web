@@ -638,11 +638,11 @@ def create_analysis():
     conn = get_db()
     cursor = conn.cursor()
     cursor.execute('''
-        INSERT INTO analyses (user_id, type, analysis_date, unit, value, notes)
-        VALUES (?, ?, ?, ?, ?, ?)
+        INSERT INTO analyses (user_id, type, analysis_date, unit, value)
+        VALUES (?, ?, ?, ?, ?)
     ''', (
         user_id, data['type'].strip(), data['analysis_date'],
-        data['unit'].strip(), str(data['value']).strip(), data.get('notes', ''),
+        data['unit'].strip(), str(data['value']).strip(),
     ))
     aid = cursor.lastrowid
     link_draft_attachments(cursor, user_id, data.get('draft_key'), 'analyses', aid)
@@ -709,7 +709,7 @@ def update_analysis(analysis_id):
         conn.close()
         return jsonify({'success': False, 'message': 'Анализ не найден'}), 404
     fields, values = [], []
-    for key in ('type', 'analysis_date', 'unit', 'value', 'notes'):
+    for key in ('type', 'analysis_date', 'unit', 'value'):
         if key in data:
             fields.append(f'{key} = ?')
             values.append(data[key])
@@ -821,8 +821,9 @@ def add_user_vaccination():
         INSERT INTO user_vaccinations (user_id, vaccine_id, date_given, notes, custom_name)
         VALUES (?, ?, ?, ?, ?)
     ''', (user_id, vaccine_id, data['date_given'], data.get('notes', ''), custom_name))
-    conn.commit()
     vid = cursor.lastrowid
+    link_draft_attachments(cursor, user_id, data.get('draft_key'), 'user_vaccinations', vid)
+    conn.commit()
     cursor.execute('''
         SELECT uv.*, v.name as vaccine_name FROM user_vaccinations uv
         LEFT JOIN vaccines v ON uv.vaccine_id = v.id WHERE uv.id = ?
@@ -1118,9 +1119,9 @@ def admin_create_vaccine():
     cursor = conn.cursor()
     try:
         cursor.execute('''
-            INSERT INTO vaccines (name, description, category, is_active)
-            VALUES (?, ?, ?, ?)
-        ''', (name, data.get('description', ''), data.get('category', 'standard'),
+            INSERT INTO vaccines (name, category, is_active)
+            VALUES (?, ?, ?)
+        ''', (name, data.get('category', 'standard'),
               1 if data.get('is_active', True) else 0))
         conn.commit()
         vid = cursor.lastrowid
@@ -1140,7 +1141,7 @@ def admin_update_vaccine(vaccine_id):
     conn = get_db()
     cursor = conn.cursor()
     fields, values = [], []
-    for key in ('name', 'description', 'category'):
+    for key in ('name', 'category'):
         if key in data:
             fields.append(f'{key} = ?')
             values.append(data[key])
@@ -1219,7 +1220,7 @@ def get_calendar_events():
             })
 
         cursor.execute('''
-            SELECT a.id, a.type, a.value, a.unit, a.analysis_date, a.notes,
+            SELECT a.id, a.type, a.value, a.unit, a.analysis_date,
                    a.batch_id, a.panel_id, p.name as panel_name
             FROM analyses a
             LEFT JOIN analysis_panels p ON a.panel_id = p.id
@@ -1246,7 +1247,6 @@ def get_calendar_events():
                 'borderColor': '#dc2626',
                 'extendedProps': {
                     'type': 'Анализ',
-                    'description': a['notes'] or '',
                     'value': f'{a["value"]} {a["unit"]}',
                     'table': 'analyses',
                     'record_id': a['id'],
@@ -1256,11 +1256,6 @@ def get_calendar_events():
 
         for (date, batch_id), items in batch_groups.items():
             panel_name = items[0].get('panel_name') or 'Комплекс анализов'
-            summary = ', '.join(
-                f'{it["type"]}: {it["value"]} {it["unit"]}' for it in items[:3]
-            )
-            if len(items) > 3:
-                summary += f' (+{len(items) - 3})'
             events.append({
                 'id': f'panel_{batch_id}',
                 'title': f'🧪 {panel_name} ({len(items)})',
@@ -1270,7 +1265,6 @@ def get_calendar_events():
                 'borderColor': '#b91c1c',
                 'extendedProps': {
                     'type': 'Комплекс анализов',
-                    'description': summary,
                     'table': 'analysis_panel',
                     'is_panel_group': True,
                     'batch_id': batch_id,
@@ -1283,7 +1277,6 @@ def get_calendar_events():
                             'type': it['type'],
                             'value': it['value'],
                             'unit': it['unit'],
-                            'notes': it.get('notes') or '',
                             'table': 'analyses',
                         }
                         for it in items
@@ -1377,12 +1370,12 @@ def add_calendar_event():
                 if not r.get('type') or r.get('value') in (None, ''):
                     continue
                 cursor.execute('''
-                    INSERT INTO analyses (user_id, type, analysis_date, unit, value, notes, panel_id, batch_id)
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                    INSERT INTO analyses (user_id, type, analysis_date, unit, value, panel_id, batch_id)
+                    VALUES (?, ?, ?, ?, ?, ?, ?)
                 ''', (
                     user_id, r['type'].strip(), event_date,
                     (r.get('unit') or '').strip(), str(r['value']).strip(),
-                    r.get('notes', description), panel_id, batch_id,
+                    panel_id, batch_id,
                 ))
             link_draft_to_batch(cursor, user_id, draft_key, batch_id)
             conn.commit()
@@ -1406,11 +1399,11 @@ def add_calendar_event():
             conn.close()
             return jsonify({'success': False, 'message': 'Укажите анализ'}), 400
         cursor.execute('''
-            INSERT INTO analyses (user_id, type, analysis_date, unit, value, notes)
-            VALUES (?, ?, ?, ?, ?, ?)
+            INSERT INTO analyses (user_id, type, analysis_date, unit, value)
+            VALUES (?, ?, ?, ?, ?)
         ''', (
             user_id, analysis_type, event_date,
-            extra.get('unit', ''), str(extra.get('value', '')), description,
+            extra.get('unit', ''), str(extra.get('value', '')),
         ))
         new_id = cursor.lastrowid
         link_draft_attachments(cursor, user_id, draft_key, 'analyses', new_id)
@@ -1433,22 +1426,10 @@ def add_calendar_event():
 
 
 register_reference_routes(app)
-
-
-@app.before_request
-def _ensure_db_initialized():
-    """При удалении БД на лету — пересоздать схему при первом запросе."""
-    if not getattr(app, '_db_ready', False):
-        try:
-            init_db()
-            app._db_ready = True
-        except Exception:
-            pass
+init_db()
 
 
 if __name__ == '__main__':
-    init_db()
-    app._db_ready = True
     print('API запущен: http://localhost:5000')
     print('Демо: demo@example.com / demo123')
     print('Админ: admin@med.local / admin123')
